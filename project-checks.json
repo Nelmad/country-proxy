@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "checks": [
+    {
+      "name": "native-unit",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "mode": "read-only",
+      "requires_network": false,
+      "timeout_seconds": 90
+    },
+    {
+      "name": "controller-unit",
+      "command": [
+        "node",
+        "--test",
+        "tests/controller.test.js"
+      ],
+      "mode": "read-only",
+      "requires_network": false,
+      "timeout_seconds": 90
+    },
+    {
+      "name": "structure",
+      "command": [
+        "python3",
+        "-B",
+        "scripts/validate.py"
+      ],
+      "mode": "read-only",
+      "requires_network": false,
+      "timeout_seconds": 90
+    }
+  ]
+}

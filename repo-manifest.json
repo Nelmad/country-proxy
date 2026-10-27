@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repo_id": "REP-006",
+  "repository_uuid": "d7a19e17-a26e-49c4-bc2e-493453282f0c",
+  "domain": "digital-products",
+  "product_id": null,
+  "project_ids": [
+    "PRJ-010"
+  ],
+  "sensitivity": "ordinary",
+  "environments": [
+    "local"
+  ],
+  "data_artifacts": [],
+  "ai_policy": {
+    "policy_version": 1,
+    "root_instructions": "AGENTS.md",
+    "claude_entry": "CLAUDE.md",
+    "checks": "project-checks.json",
+    "live_trading_execution": "deny"
+  }
+}

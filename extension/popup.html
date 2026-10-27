@@ -1,0 +1,6 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Country Proxy</title><link rel="stylesheet" href="style.css"></head>
+<body class="popup"><header><div class="mark">↗</div><div><h1>Country Proxy</h1><p>Подключение по стране</p></div><button id="settings" class="icon" title="Настройки стран">⚙</button></header>
+<main><label for="country">Куда подключиться</label><select id="country"></select>
+<section class="status" aria-live="polite"><div class="status-heading"><span id="dot" class="dot"></span><h2 id="phase">Загрузка…</h2></div><p id="detail"></p><progress id="progress" hidden></progress><div id="proxy" class="proxy" hidden></div><p id="checked" class="muted"></p></section>
+<button id="connect" class="primary">Подключить</button><div class="actions"><button id="rotate" hidden>Найти другой</button><button id="disconnect" hidden>Отключить</button></div>
+<p id="error" class="error" role="alert"></p><footer>Бесплатные публичные прокси · HTTPS-проверка<br>При поиске и сбое прямой выход заблокирован.</footer></main><script type="module" src="popup.js"></script></body></html>

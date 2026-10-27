@@ -1,0 +1,6 @@
+proxy-scraper-cli @ https://github.com/maximilianfeix/proxy-scraper/archive/b1ade5b4aa0627ccbb193dcd9d36a621c0a22aeb.zip#sha256=ce21f3aeba1fb9ce73f866aa89d994526bf30f5adf3ee335692f3dc2bf80f48b
+certifi==2026.10.23
+rich==15.0.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+Pygments==2.21.0

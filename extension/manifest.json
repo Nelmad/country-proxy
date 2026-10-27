@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Country Proxy",
+  "version": "0.1.0",
+  "minimum_chrome_version": "120",
+  "description": "Выберите страну: автоматический поиск, HTTPS-проверка и замена бесплатных прокси.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsNj5R9Ghzaci6eOuUA4ylBIApZs3m1DxnoCEQM9ih1t+PZ0kbHbNUzFsWGItPDLvRfGhcxXQk52pn2pDqY4z/00nRL2uoDmETaZlApu8ac6cYWScWpfZrUAOra8Z2TsI1W9QQDJFyPyRFYDK8uVfxfgpABuD34A1avnbaAwX0VsgL/5khsPZb/Aob3XG3NuxxWX0T5lHmRvmJx0yU5392LjQYtoaeLeQXpXH7dNjHVhcdzBRZFuGhqeWGrD991ElEvSyn3Ljcg8lB5ZjCF3YimiHPWZcE/m5sp08Tr1cjcxjXKiUe0gEqEi4VqTSFhTMPJJNyHnJLsFuGPzSfUyQWQIDAQAB",
+  "permissions": [
+    "proxy",
+    "storage",
+    "nativeMessaging",
+    "alarms",
+    "privacy"
+  ],
+  "host_permissions": [
+    "https://www.cloudflare.com/*",
+    "https://www.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Country Proxy"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "incognito": "not_allowed"
+}
