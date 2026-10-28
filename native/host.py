@@ -41,7 +41,7 @@ async def main():
     task = session = None
     request_id = ''
     try:
-        send({'type': 'hello', 'version': '0.1.0'})
+        send({'type': 'hello', 'version': json.loads((Path(__file__).resolve().parents[1] / 'extension/manifest.json').read_text())['version']})
         while True:
             message = await receive(reader)
             command = message.get('command')

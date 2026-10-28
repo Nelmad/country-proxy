@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import {inspectRuntime} from './chrome-runtime.mjs';
 import {createRequire} from 'node:module';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root=path.resolve(import.meta.dirname,'..');
@@ -12,6 +13,7 @@ async function open() {
  browser=await chromium.launchPersistentContext(profile,{headless:true,channel:'chromium',ignoreDefaultArgs:['--disable-extensions'],
    args:[`--disable-extensions-except=${root}/extension`,`--load-extension=${root}/extension`]});
  const worker=browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker');
+ (report.runtimes ??= []).push(await inspectRuntime(browser,root));
  const id=worker.url().split('/')[2];
  const page=await browser.newPage();await page.goto(`chrome-extension://${id}/popup.html`);return page;
 }

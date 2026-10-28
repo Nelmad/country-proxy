@@ -1,5 +1,7 @@
 """Create a local source/install ZIP from an explicit allowlist; never include runtime or Git."""
 from pathlib import Path
+import json
+import re
 from zipfile import ZipFile, ZIP_DEFLATED
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,7 +10,9 @@ files = ['README.md','Install.command','requirements.txt','package.json','projec
 for directory in ['extension','native','scripts','tests','docs','config']:
     files += [str(p.relative_to(ROOT)) for p in (ROOT/directory).rglob('*')
               if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc']
-output = ROOT/'dist/country-proxy-0.1.0.zip'
+version = json.loads((ROOT/'extension/manifest.json').read_text())['version']
+assert re.fullmatch(r'\d+(?:\.\d+){1,3}', version)
+output = ROOT/f'dist/country-proxy-{version}.zip'
 output.parent.mkdir(exist_ok=True)
 with ZipFile(output,'w',ZIP_DEFLATED) as archive:
     for name in sorted(files):

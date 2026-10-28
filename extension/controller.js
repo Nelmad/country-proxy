@@ -5,7 +5,7 @@ export const BLOCKED = {mode: 'fixed_servers', rules: {
   fallbackProxy: {scheme: 'http', host: '127.0.0.1', port: 9}, bypassList: ['<-loopback>']
 }};
 export function proxyConfig(proxy) {
-  if (!['http', 'socks4', 'socks5'].includes(proxy.scheme) ||
+  if (!['http', 'https', 'socks4', 'socks5'].includes(proxy.scheme) ||
       !/^\d{1,3}(\.\d{1,3}){3}$/.test(proxy.host) ||
       !Number.isInteger(proxy.port) || proxy.port < 1 || proxy.port > 65535) throw Error('Некорректный прокси');
   const server = {scheme: proxy.scheme, host: proxy.host, port: proxy.port};
@@ -34,7 +34,7 @@ export class Controller {
     return this.queue(async () => {
       if (id !== this.id) return;
       this.enabled = true; this.country = country; this.active = null; this.rejected.clear();
-      await this.api.save({enabled: true, selected: country});
+      await this.api.save({enabled: true, selected: country, pool: null});
       await this.api.block();
       await this.api.publish({phase: 'searching', country, proxy: null});
       await this.api.startNative({command: 'start', country, id});
@@ -45,7 +45,7 @@ export class Controller {
     return this.queue(async () => {
       if (id !== this.id) return;
       this.enabled = false; this.active = null;
-      await this.api.save({enabled: false});
+      await this.api.save({enabled: false, pool: null});
       this.api.stopNative();
       await this.api.clear();
       await this.api.publish({phase: 'off', proxy: null});
@@ -54,6 +54,14 @@ export class Controller {
   status(event) {
     return this.queue(async () => {
       if (!this.enabled || event.id !== this.id || event.country !== this.country) return;
+      if (event.phase === 'pool') {
+        const count = Number.isInteger(event.reserveCount) ? Math.max(0, Math.min(2, event.reserveCount)) : 0;
+        return this.api.save({pool: {country: this.country, count, checking: event.reserveChecking === true,
+          expiresAt: Number.isFinite(event.reserveExpiresAt) ? event.reserveExpiresAt : 0}});
+      }
+      // A queued health warning may arrive after browser rejection or replacement.
+      if (event.phase === 'confirming' &&
+          (!this.active || proxyKey(event.proxy) !== proxyKey(this.active))) return;
       if (event.phase === 'connected' && event.proxy) {
         if ((this.rejected.get(proxyKey(event.proxy)) || 0) > Date.now()) return;
         if (event.proxy.country !== this.country) throw Error('Страна прокси не совпадает');
@@ -78,7 +86,7 @@ export class Controller {
           return;
         }
         this.active = event.proxy; this.lastBrowserCheck = Date.now();
-      } else if (['searching', 'replacing', 'empty', 'error'].includes(event.phase)) {
+      } else if (['searching', 'replacing', 'reserve', 'empty', 'error'].includes(event.phase)) {
         this.active = null;
         await this.api.block();
       }
@@ -92,6 +100,7 @@ export class Controller {
       if (!this.enabled || id !== this.id) return;
       this.active = null;
       await this.api.block();
+      await this.api.save({pool: null});
       await this.api.publish({phase: 'helper', proxy: null, country: this.country});
     });
   }

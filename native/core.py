@@ -14,7 +14,6 @@ COUNTRIES = set(json.loads((ROOT / 'extension/countries.json').read_text()))
 SCHEMES = ('http', 'socks4', 'socks5')
 TRACE = 'https://www.cloudflare.com/cdn-cgi/trace'
 TARGET = 'https://www.google.com/generate_204'
-SOURCE = 'https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/by-country/{country}.txt'
 
 
 def country_code(value):
@@ -43,7 +42,7 @@ def parse_candidates(text):
     """Lists are untrusted: accept public literal IPv4 only, never credentials or URLs."""
     result = []
     for line in text.splitlines():
-        m = re.fullmatch(r'(?:(http|socks4|socks5)://)?(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})', line.strip())
+        m = re.fullmatch(r'(?:(https|http|socks4|socks5)://)?(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})', line.strip())
         if not m:
             continue
         scheme, host, port = m.groups()
@@ -98,19 +97,8 @@ async def discover(country, cap=120):
         if code:
             raise RuntimeError('proxy-scraper недоступен')
         return parse_candidates(raw)
-    async def text_source():
-        code, status, raw = await curl(SOURCE.format(country=country), slow=False)
-        if code or status != '200':
-            raise RuntimeError(f'hproxy: HTTP {status or "—"}')
-        return parse_candidates(raw)
-    parts = await asyncio.gather(library(), text_source(), return_exceptions=True)
-    errors, combined = [], []
-    for name, part in zip(('proxy-scraper', 'hproxy'), parts):
-        if isinstance(part, BaseException):
-            errors.append(name + ': источник недоступен')
-        else:
-            combined.extend(part)
-    return list(dict.fromkeys(combined))[:cap], errors
+    from sources import collect
+    return await collect(country, curl, parse_candidates, library, cap)
 
 
 async def check(candidate, country, slow=False):
@@ -169,19 +157,34 @@ async def scan(candidates, country, on_progress, checker=check, concurrency=10):
 
 
 class Session:
-    def __init__(self, country, emit, discoverer=discover, checker=check, interval=30, retry=60):
+    def __init__(self, country, emit, discoverer=discover, checker=check, interval=30, retry=60,
+                 pool_factory=None):
+        from pool import ReservePool
         self.country = country_code(country)
         self.emit = emit
         self.discoverer, self.checker = discoverer, checker
         self.interval, self.retry = interval, retry
         self.active = None
+        self.previous = None
         self.wake = asyncio.Event()
         self.force_rotate = False
         self.excluded = {}
+        self.pool_task = None
+        self.pool = (pool_factory or ReservePool)(self.country, discoverer, checker,
+            lambda: self.active or self.previous, self.eligible, self.exclude, emit)
+
+    def eligible(self, candidate):
+        now = time.monotonic()
+        self.excluded = {host: until for host, until in self.excluded.items() if until > now}
+        return candidate.host not in self.excluded
+
+    def exclude(self, candidate, seconds=180):
+        self.excluded[candidate.host] = max(self.excluded.get(candidate.host, 0), time.monotonic() + seconds)
 
     def nudge(self, rotate=False):
-        self.force_rotate |= rotate
-        self.wake.set()
+        if self.active:
+            self.force_rotate |= rotate
+            self.wake.set()
 
     async def pause(self, seconds):
         try:
@@ -190,35 +193,56 @@ class Session:
             pass
         self.wake.clear()
 
+    async def stop_pool(self):
+        if self.pool_task:
+            self.pool_task.cancel()
+            await asyncio.gather(self.pool_task, return_exceptions=True)
+            self.pool_task = None
+        self.pool.checking = False
+
     async def run(self):
         failures = 0
-        while True:
-            if not self.active:
-                self.emit({'phase': 'searching', 'proxy': None})
-                candidates, errors = await self.discoverer(self.country)
-                candidates = [c for c in candidates if self.excluded.get(c.key, 0) < time.monotonic()]
-                self.emit({'phase': 'checking', 'total': len(candidates), 'done': 0, 'warnings': errors})
-                self.active = await scan(candidates, self.country,
-                    lambda phase, done, total: self.emit({'phase': phase, 'done': done, 'total': total}), self.checker)
+        try:
+            while True:
                 if not self.active:
-                    self.emit({'phase': 'empty', 'proxy': None, 'warnings': errors, 'retrySeconds': self.retry})
-                    await self.pause(self.retry)
-                    continue
-                failures = 0
-                self.force_rotate = False
-                self.emit({'phase': 'connected', 'proxy': self.active})
-            await self.pause(self.interval)
-            candidate = Candidate(self.active['scheme'], self.active['host'], self.active['port'])
-            result = None if self.force_rotate else await self.checker(candidate, self.country, True)
-            if result:
-                failures = 0
-                self.active = result
-                self.emit({'phase': 'connected', 'proxy': result})
-            else:
-                failures += 1
-                if self.force_rotate or failures >= 2:
-                    self.excluded[candidate.key] = time.monotonic() + 180
-                    self.active, self.force_rotate = None, False
-                    self.emit({'phase': 'replacing', 'proxy': None})
+                    self.active = await self.pool.take()
+                    if not self.active:
+                        self.emit({'phase': 'searching', 'proxy': None})
+                        candidates, errors = await self.discoverer(self.country)
+                        candidates = [c for c in candidates if self.eligible(c)]
+                        self.emit({'phase': 'checking', 'total': len(candidates), 'done': 0, 'warnings': errors})
+                        self.active = await scan(candidates, self.country,
+                            lambda phase, done, total: self.emit({'phase': phase, 'done': done, 'total': total}), self.checker)
+                        if not self.active:
+                            self.emit({'phase': 'empty', 'proxy': None, 'warnings': errors, 'retrySeconds': self.retry})
+                            await self.pause(self.retry)
+                            continue
+                    failures = 0
+                    self.force_rotate = False
+                    self.wake.clear()
+                    self.emit({'phase': 'connected', 'proxy': self.active})
+                    self.pool_task = asyncio.create_task(self.pool.run())
+                await self.pause(self.interval)
+                candidate = Candidate(self.active['scheme'], self.active['host'], self.active['port'])
+                result = None if self.force_rotate else await self.checker(candidate, self.country, True)
+                # A browser rejection can arrive while the native health request is still in flight.
+                if self.force_rotate:
+                    result = None
+                if result:
+                    failures = 0
+                    self.active = result
+                    self.emit({'phase': 'connected', 'proxy': result})
                 else:
-                    self.emit({'phase': 'confirming', 'proxy': self.active})
+                    failures += 1
+                    if self.force_rotate or failures >= 2:
+                        self.exclude(candidate)
+                        await self.stop_pool()
+                        self.previous = self.active
+                        self.active, self.force_rotate = None, False
+                        self.emit({'phase': 'replacing', 'proxy': None})
+                        self.pool.publish()
+                    else:
+                        self.emit({'phase': 'confirming', 'proxy': self.active})
+        finally:
+            await self.stop_pool()
+            self.pool.entries.clear()

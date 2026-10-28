@@ -10,7 +10,7 @@ root=Path(__file__).resolve().parents[1]
 for folder in ['native','scripts','tests']:
     for p in (root/folder).glob('*.py'):
         ast.parse(p.read_text(), filename=str(p))
-for p in (root/'extension').glob('*.js'):
+for p in [*(root/'extension').glob('*.js'), *(root/'tests').glob('*.mjs')]:
     subprocess.run(['node','--check',str(p)],check=True)
 manifest=json.loads((root/'extension/manifest.json').read_text())
 assert manifest['manifest_version']==3

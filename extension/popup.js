@@ -4,7 +4,7 @@ const names = new Intl.DisplayNames(['ru'], {type: 'region'});
 let enabled = false; let lastCountries = ''; let lastSelected = '';
 const labels = {off: 'Отключено', searching: 'Ищем адреса', checking: 'Проверяем прокси', slow: 'Проверяем медленные адреса',
   verifying: 'Проверяем в Chrome', connected: 'Подключено', confirming: 'Перепроверяем соединение',
-  replacing: 'Меняем прокси', empty: 'Рабочих адресов пока нет', helper: 'Нужен локальный помощник', error: 'Не удалось подключиться'};
+  reserve: 'Проверяем резерв', replacing: 'Меняем прокси', empty: 'Рабочих адресов пока нет', helper: 'Нужен локальный помощник', error: 'Не удалось подключиться'};
 async function render() {
   const state = await chrome.storage.local.get(null);
   const s = state.status || {phase: 'off'};
@@ -27,7 +27,8 @@ async function render() {
     verifying: 'Подтверждаем страну и HTTPS через браузер.',
     connected: 'Соединение проверяется каждые 30 секунд. Замена при сбое — автоматически.',
     confirming: 'Один запрос не прошёл. Проверяем повторно перед заменой.',
-    replacing: 'Ищем следующий рабочий адрес выбранной страны.',
+    reserve: 'Повторно проверяем подготовленный адрес перед подключением в Chrome.',
+    replacing: 'Пробуем резерв, затем ищем следующий адрес выбранной страны.',
     empty: 'Повторим поиск через минуту. Можно выбрать другую страну.',
     helper: 'Запустите Install.command из папки Country Proxy. Повторное подключение — автоматически.'
   }[s.phase] || '');
@@ -36,6 +37,10 @@ async function render() {
   $('proxy').hidden = !s.proxy;
   $('proxy').textContent = s.proxy ? `${s.proxy.scheme.toUpperCase()}  ${s.proxy.host}:${s.proxy.port}\nВыход: ${s.proxy.exitIp} · ${s.proxy.country} · ${(s.proxy.latencyMs/1000).toFixed(1)} с` : '';
   $('checked').textContent = s.proxy ? 'Проверено ' + new Date(s.proxy.checkedAt).toLocaleTimeString('ru') : (s.warnings || []).join(' · ');
+  const pool = state.pool?.country === state.selected ? state.pool : null;
+  const count = pool?.expiresAt > Date.now() ? pool.count : 0;
+  $('reserve').hidden = !enabled;
+  $('reserve').textContent = count ? `Резерв: ${count} из 2 · проверен помощником` : pool?.checking ? 'Ищем и проверяем резервные адреса…' : 'Проверенных резервных адресов пока нет.';
   $('connect').hidden = enabled; $('disconnect').hidden = !enabled;
   $('rotate').hidden = !enabled || !s.proxy;
 }
@@ -50,4 +55,5 @@ $('disconnect').addEventListener('click', () => send('disconnect'));
 $('rotate').addEventListener('click', () => send('rotate'));
 $('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
 chrome.storage.onChanged.addListener(render);
+setInterval(render, 1000);
 render();

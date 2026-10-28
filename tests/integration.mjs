@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
+import {inspectRuntime} from './chrome-runtime.mjs';
 import {createRequire} from 'node:module';
 const require = createRequire(import.meta.url);
 const {BLOCKED} = await import('../extension/controller.js');
@@ -19,6 +20,7 @@ const browser=await chromium.launchPersistentContext(profile,{
 const report={at:new Date().toISOString(), browser:browser.browser()?.version(), countries:{}};
 try {
  const worker=browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker',{timeout:20000});
+ report.runtime=await inspectRuntime(browser,root);
  console.log('worker:',worker.url());
  worker.on('console',msg=>console.log('WORKER',msg.text()));
  const popup=await browser.newPage();
