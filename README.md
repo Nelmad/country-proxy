@@ -1,61 +1,112 @@
 # Country Proxy
 
-Локальное расширение Chrome: выбираете страну, оно ищет публичные прокси, проверяет HTTPS и страну выхода, подключается и заменяет адрес при сбое. Страны настраиваются в интерфейсе; NO, EE и AT — только начальные значения. Поддерживаются HTTP CONNECT, HTTPS-прокси, SOCKS4 и SOCKS5.
+**Find and use public proxies from a country or an allowed set of countries in Chrome.**
 
-## Установка на Mac
+Country Proxy discovers addresses, checks HTTPS and the exit country, confirms
+the connection in Chrome, and replaces a failed proxy automatically. It is for
+occasional public-web testing and country-routing experiments—for example,
+checking your own public website through an available exit.
 
-Скачайте [исходники](https://github.com/Nelmad/country-proxy) или клонируйте репозиторий:
+[Русское руководство](docs/README.ru.md) · [Getting started](docs/getting-started.md) ·
+[Help](.github/SUPPORT.md) · [Security](.github/SECURITY.md) · [MIT License](LICENSE)
 
-```sh
-git clone https://github.com/Nelmad/country-proxy.git
-cd country-proxy
-```
+The interface is **Russian**; country search accepts Russian, English, and ISO
+codes. The first stable targets **macOS and a regular Chrome profile**, with a
+manual unpacked-extension install and a local **Python 3.11+** helper. Chrome
+120+ is the code minimum; acceptance used Chrome for Testing 151 and Python
+3.14 on macOS, not every version in that range. Linux has an installer but has
+not passed the full browser acceptance. Windows and Incognito are unsupported.
+There is no Chrome Web Store distribution or automatic update.
 
-1. Оставьте эту папку в постоянном месте. Запустите **Install.command** двойным щелчком. Нужны Python 3.11+ и интернет; зависимости устанавливаются только в `.venv` внутри проекта.
-2. Откройте `chrome://extensions`, включите **Режим разработчика**, нажмите **Загрузить распакованное расширение** и выберите папку **extension**.
-3. Закрепите Country Proxy на панели. Выберите страну и нажмите **Подключить**. Дальше смена страны в меню запускает подключение сразу.
-4. Кнопка **⚙** открывает список стран: добавьте или уберите нужные, нажмите **Сохранить страны**.
+Published assets and release status: [GitHub Releases](https://github.com/Nelmad/country-proxy/releases).
+Use the ZIP instructions below when the corresponding asset is available.
+A source checkout or locally built ZIP is not itself a published release.
 
-Помощник запускается самим Chrome при подключении. Отдельный терминал и фоновый системный сервис не нужны. Повторный запуск установщика безопасен. Для Linux: `python3 scripts/install.py`; затем те же шаги Chrome. Windows пока не поддерживается. Node.js для использования не нужен.
+![Russian country picker with Austria, Estonia and Norway selected](docs/images/country-picker.png)
 
-## Как это работает
+*Russian interface, disconnected example with the equal AT / EE / NO set.
+Actual isolated-profile capture, 17 November 2026; not a public-availability result.*
 
-Используются восемь источников: proxy-scraper, hproxy, Proxifly, ProxyScrape, GeoNode, Litport, ProxMint и Databay. Форматы, кэширование и ссылки — в [описании источников](docs/sources.md). Все адреса проверяются заново с вашего компьютера. Помощник проверяет два HTTPS-сервиса и страну выхода; после установки прокси Chrome сам подтверждает те же условия. TLS-проверка сертификатов включена. Трафик браузера идёт непосредственно к найденному прокси.
+## Before connecting
 
-Проверка активного адреса — каждые 30 секунд после предыдущей проверки; после двух неудач начинается замена. Браузерная проверка повторяется раз в минуту и при ошибке прокси в Chrome. Публичный прокси может отвечать медленно: быстрый проход занимает до 12 секунд на кандидата, повторный — до 45 секунд, проверка браузером — до 50 секунд. Эти правила одинаковы для всех стран, включая Норвегию. После подключения помощник в фоне готовит до двух резервных адресов той же страны с другими хостами и выходными IP. Резерв хранится только в текущей сессии, срок свежести — 90 секунд; перед применением он повторно проверяется помощником и затем Chrome. При отказе сначала пробуется резерв, затем запускается полный поиск. Счётчик резерва виден в popup. Если адресов нет, поиск повторяется раз в минуту. Кнопка **Найти другой** инициирует замену вручную.
+Use a separate Chrome profile without personal accounts for evaluation. Public
+proxy operators are third parties: a successful HTTPS/country check does not
+establish operator trust, anonymity, no logging, or access to every site.
+Use a trusted connection for sensitive activity. Country Proxy changes the
+chosen **browser profile**, not the system proxy; it is not an OS-wide VPN.
 
-Пока идёт поиск, при смене страны или потере помощника прямое HTTP/HTTPS-подключение в обычном профиле Chrome блокируется. **Отключить** освобождает настройки Chrome. Для WebRTC запрещается UDP в обход прокси, отключается предзагрузка страниц; при отключении эти настройки освобождаются. Расширение не является VPN для системы. Режим инкогнито в этой версии не поддерживается.
+While searching, checking, or recovering, **new ordinary HTTP/HTTPS requests
+across that profile are blocked**, including open tabs and localhost. Previously
+sent traffic and existing connections cannot be recalled. Keep the recovery
+steps below available before starting.
 
-Бесплатные адреса могут исчезнуть, а отдельные сайты могут их блокировать. Успешная проверка двух HTTPS-сервисов не обещает доступ ко всем сайтам. Обычный HTTP не шифруется до конечного сайта, поэтому для чувствительных данных используйте HTTPS. Страна — результат Cloudflare GeoIP, а не обещание владельца списка.
+## Quick start
 
-## Разработка и проверка
+1. Install Python 3.11+ if needed. Download `country-proxy-X.Y.Z.zip` and its
+   `.zip.sha256` from a published [release](https://github.com/Nelmad/country-proxy/releases),
+   then [verify the checksum](docs/getting-started.md#install-on-macos).
+   GitHub's automatic **Source code (zip)** is a different archive.
+2. Extract the bundle to a **permanent folder** and run `Install.command` on
+   macOS. It creates a local `.venv`, installs dependencies, and registers the
+   Native Messaging helper. No always-open terminal is needed.
+3. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**,
+   and select `extension` from **the same bundle**. Both helper installation
+   and extension loading are required.
+4. Pin Country Proxy, open it, and choose a country. In **Несколько стран**
+   (multiple countries), select a set and click **Подключить выбранные** (connect
+   selected). Wait for **Подключено** (connected): the browser has confirmed the
+   route. A country in the 249-entry catalog does not guarantee a live proxy.
+5. When finished, click **Отключить** (Stop). If a page was blocked during the
+   search, reload it after connecting; forms are not automatically resubmitted.
 
-Требуются Python 3.11+ и Node.js 20+. Канонический контракт:
+[Full English setup, status guide, update and rollback basics](docs/getting-started.md) ·
+[Подробная установка на русском](docs/installation.md)
 
-```sh
-# Используйте Python 3.11+; после установки можно активировать окружение проекта.
-source .venv/bin/activate
-python3 scripts/check.py --list
-python3 scripts/check.py --execute-reviewed <digest>
-```
+## Stop and restore your connection
 
-Live smoke запускается отдельно и действительно обращается к открытым прокси. Он использует отдельный профиль, проверяет Native Messaging, произвольную дополнительную страну в настройках, NO/EE/AT, сетевую блокировку и отключение:
+Click **Отключить** (Stop). If cleanup needs another attempt, click
+**Повторить отключение** (retry Stop). **Отключено** means Country Proxy has
+released its own proxy, request-blocking, and privacy settings; another proxy
+or system setting may still apply.
 
-```sh
-python3 scripts/install.py --profile .runtime/chrome-test
-# Нужен установленный Playwright и его Chromium/Chrome for Testing.
-node tests/integration.mjs
-node tests/recovery.mjs
-TEST_COUNTRY=NO node tests/failover.mjs
-node tests/failover-lab.mjs
-TEST_RESERVE=1 node tests/failover-lab.mjs
-TEST_SAVED_PROFILE=1 TEST_RESTART=1 TEST_FAILURE=route TEST_RESERVE=1 node tests/failover-lab.mjs
-```
+If the popup is unavailable, open `chrome://extensions` and **turn off Country
+Proxy**. This suspends its request blocking and releases its Chrome settings;
+removal is unnecessary. [Recovery and common problems](docs/getting-started.md#stop-and-recover)
+also covers a missing helper and a connection that remains in search.
 
-Failover-тест каждый раз создаёт новый временный профиль Chrome for Testing и отдельную регистрацию помощника; после запуска удаляет их. Перед проверкой тест сравнивает реально исполняемые background/controller scripts с исходниками через Chromium Debugger. Несовпадение завершает тест ошибкой. Браузер работает headless. Тест заменяет маршрут на недоступный, ждёт штатную автоматическую реакцию и требует другой IP с той же страной. Команду ручной ротации он не вызывает. Если второго адреса нет, отчёт помечается PARTIAL_NO_ALTERNATE, код выхода 2; это не успешный тест замены.
+## What it does
 
-`failover-lab.mjs` проверяет полную цепочку через два управляемых loopback CONNECT-прокси. Отключает A и ждёт автоматического подключения B. Использует настоящий HTTPS и фактическую страну текущего сетевого выхода; сертификаты и GeoIP не подменяются. Оба адреса имеют один внешний IP, поэтому PASS стенда подтверждает механизм замены, но не наличие двух публичных прокси NO. Нужен интернет. У стенда собственный временный профиль Chrome и Native Messaging registration; они удаляются после теста. Основной профиль не меняется. `TEST_RESERVE=1` дожидается готового резерва до отказа; `TEST_RESTART=1` повторно открывает тот же профиль без команды подключения. `TEST_FAILURE=route` ломает только маршрут браузера при живом upstream. `TEST_SAVED_PROFILE=1` использует исключительно `.runtime/chrome-test`, при устаревшем коде выполняет Reload тестового расширения и восстанавливает регистрацию/настройки после проверки. Для loopback-стенда идентичность endpoints определяется портом; правило разных публичных хостов/выходных IP проверяется unit-тестами без изменения production policy.
+- **An equal country set.** Select one country or an unordered group. Selection
+  order gives no priority; a healthy connection stays in use rather than
+  rotating on a timer. The chosen set and measured exit country are shown separately.
+- **Checks in both parts.** The helper checks two certificate-validated HTTPS
+  targets and Cloudflare GeoIP; Chrome then checks its own route. Supported
+  transports: HTTP CONNECT, HTTPS proxy, SOCKS4, and SOCKS5.
+- **Recovery and diagnostics.** Up to two reserves are prepared for the whole
+  set. Failed candidates are temporarily skipped; source contribution and
+  reserve diagnostics explain the current search. Search retries when no
+  acceptable address is available.
+- **Reusable selection.** Favorites and named country groups are stored
+  locally. Group JSON export/import contains group names and countries.
 
-Можно указать `PLAYWRIGHT_MODULE` (абсолютный путь к установленному модулю) и `TEST_COUNTRIES=NO,EE,AT`. Скриншоты и свежие адреса остаются в игнорируемой `.runtime/`; они не включаются в пакет. Успех сетевого запуска означает выполненную проверку, а не гарантированное наличие адресов — итог каждого региона хранится отдельно в `live-report.json`.
+Free public proxies are unreliable. There is no availability, speed, country
+coverage, or recovery-time guarantee, and passing the two probe sites does not
+promise that a particular destination will work. Discovery builds on
+[proxy-scraper](https://github.com/maximilianfeix/proxy-scraper) and other
+[public sources](docs/sources.md); see [third-party notices](NOTICE).
 
-Архитектура: [docs/architecture.md](docs/architecture.md). Эксплуатация и удаление: [docs/runbook.md](docs/runbook.md). Результаты: [docs/verification.md](docs/verification.md).
+## Documentation and help
+
+| Need | Read |
+| --- | --- |
+| Install, use, recover, or update (English) | [Getting started](docs/getting-started.md) |
+| Detailed use / installation / troubleshooting (Russian) | [Guide](docs/README.ru.md) · [Installation](docs/installation.md) · [Runbook](docs/runbook.md) |
+| Understand network calls, storage, and permissions | [Data and permissions](docs/getting-started.md#data-and-permissions) |
+| Ask for help or report a bug | [Support](.github/SUPPORT.md) |
+| Report a security concern | [Security policy](.github/SECURITY.md) |
+| Develop or run checks | [Contributing](CONTRIBUTING.md) |
+| Check evidence, scope, or changes | [Verification](docs/verification.md) · [Stable scope](docs/stable-readiness.md) · [Changelog](CHANGELOG.md) |
+
+Most detailed engineering documentation is in Russian. Controlled test results
+and observed public-proxy availability are recorded separately; neither is a
+promise of public uptime.

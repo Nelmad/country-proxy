@@ -1,6 +1,111 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Country Proxy</title><link rel="stylesheet" href="style.css"></head>
-<body class="popup"><header><div class="mark">↗</div><div><h1>Country Proxy</h1><p>Подключение по стране</p></div><button id="settings" class="icon" title="Настройки стран">⚙</button></header>
-<main><label for="country">Куда подключиться</label><select id="country"></select>
-<section class="status" aria-live="polite"><div class="status-heading"><span id="dot" class="dot"></span><h2 id="phase">Загрузка…</h2></div><p id="detail"></p><progress id="progress" hidden></progress><div id="proxy" class="proxy" hidden></div><p id="checked" class="muted"></p><p id="reserve" class="muted" hidden></p></section>
-<button id="connect" class="primary">Подключить</button><div class="actions"><button id="rotate" hidden>Найти другой</button><button id="disconnect" hidden>Отключить</button></div>
-<p id="error" class="error" role="alert"></p><footer>Бесплатные публичные прокси · HTTPS-проверка<br>При поиске и сбое прямой выход заблокирован.</footer></main><script type="module" src="popup.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Country Proxy</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="saved-groups.css">
+</head>
+<body class="popup">
+<header class="masthead">
+  <span class="mark" aria-hidden="true"></span>
+  <h1>Country Proxy</h1>
+  <button id="settings" class="text-action" title="Открыть настройки">Настройки</button>
+</header>
+<main>
+  <section class="status" aria-labelledby="phase">
+    <div class="status-heading">
+      <span id="dot" class="dot" aria-hidden="true"></span>
+      <h2 id="phase" aria-live="polite">Загрузка…</h2>
+    </div>
+    <p id="detail"></p>
+    <progress id="progress" aria-label="Проверено адресов" hidden></progress>
+    <div id="proxy" class="proxy" hidden>
+      <strong id="exit-location"></strong>
+      <span id="exit-address"></span>
+      <span id="server-address"></span>
+    </div>
+    <p id="checked" class="muted"></p>
+    <p id="reserve" class="reserve" hidden></p>
+  </section>
+
+  <div class="selection-modes" role="group" aria-label="Режим выбора стран">
+    <button id="mode-single" aria-pressed="true">Одна страна</button>
+    <button id="mode-multiple" aria-pressed="false">Несколько стран</button>
+  </div>
+  <div class="country-picker-wrap">
+    <span id="country-label" class="field-label">Страна подключения</span>
+    <div class="country-selection">
+      <button id="country" class="country-trigger" aria-labelledby="country-label country-name" aria-haspopup="dialog" aria-expanded="false" aria-controls="country-picker">
+        <span id="country-name">Выберите страну</span><span class="chevron" aria-hidden="true"></span>
+      </button>
+      <button id="pin-selected" class="favorite-toggle" hidden></button>
+    </div>
+    <dialog id="country-picker" class="country-picker" aria-labelledby="picker-title" hidden>
+      <div class="picker-heading">
+        <h2 id="picker-title">Выбор страны</h2>
+        <button id="selection-cancel" class="text-action" aria-label="Закрыть выбор без применения">Отмена</button>
+      </div>
+      <label for="country-search" class="visually-hidden">Поиск страны по названию или коду</label>
+      <input id="country-search" type="search" placeholder="Название или код страны" autocomplete="off" spellcheck="false">
+      <p id="country-count" class="picker-count" role="status"></p>
+      <p id="country-keys" class="visually-hidden">Стрелки вверх и вниз перемещают по странам. Home и End переходят к первой и последней стране.</p>
+      <ul id="country-results" aria-describedby="country-keys" class="country-results" aria-label="Страны и территории"></ul>
+      <div id="selection-draft" class="selection-draft" hidden>
+        <p id="selection-draft-note"></p>
+        <div id="selection-draft-chips" class="selection-chips" role="group" aria-label="Убрать страну из группы. Стрелки влево и вправо выбирают страну"></div>
+      </div>
+      <p id="selection-error" class="error" role="alert"></p>
+      <button id="selection-apply" class="primary" hidden>Подключить выбранные</button>
+      <p id="picker-hint" class="picker-hint"></p>
+    </dialog>
+  </div>
+  <div id="selection-summary" class="selection-summary" aria-label="Выбранные страны" hidden></div>
+  <p id="selection-active-note" class="catalog-note" hidden></p>
+  <p id="catalog-note" class="catalog-note"></p>
+  <section id="favorites-section" class="favorites-section" aria-label="Избранные страны" hidden>
+    <p class="section-label">Избранное</p><div id="favorites" class="favorite-chips"></div>
+  </section>
+
+  <div class="connection-controls">
+    <button id="connect" class="primary">Выбрать страну</button>
+    <div class="actions"><button id="rotate" hidden>Найти другой</button><button id="disconnect" hidden>Отключить</button></div>
+  </div>
+  <p id="error" class="error" role="alert"></p>
+  <section id="saved-groups" class="saved-groups" hidden></section>
+
+  <details id="reserve-diagnostics" class="selection-help" hidden>
+    <summary>Диагностика резерва</summary>
+    <p id="reserve-state"></p>
+    <p id="reserve-window"></p>
+    <dl id="reserve-counts"></dl>
+    <p id="reserve-failures" hidden></p>
+    <section id="reserve-removals" aria-labelledby="reserve-removal-title" hidden>
+      <h3 id="reserve-removal-title">Почему исчез резерв</h3>
+      <p id="reserve-removal-note"></p>
+      <ol id="reserve-removal-list"></ol>
+    </section>
+  </details>
+  <details id="source-quality" class="selection-help" hidden>
+    <summary>Вклад источников</summary>
+    <p id="diagnostics" class="muted" hidden></p>
+    <p>Один рабочий адрес даёт один балл на пять минут. Если его нашли несколько источников, балл делится между ними. В колонке Chrome учитываются подтверждённые браузером адреса.</p>
+    <label for="source-country" class="field-label">Страна списка</label>
+    <select id="source-country"></select>
+    <button id="refresh-sources" type="button">Обновить</button>
+    <p id="source-message" role="status"></p>
+    <table id="source-table" hidden>
+      <thead><tr><th>Источник</th><th>Помощник</th><th>Chrome</th></tr></thead>
+      <tbody id="source-rows"></tbody>
+    </table>
+    <p id="source-fetches"></p>
+  </details>
+  <details class="selection-help">
+    <summary>Как выбирается прокси</summary>
+    <p id="selection-help-first"></p><p id="selection-help-replace"></p>
+  </details>
+</main>
+<script type="module" src="popup.js"></script>
+<script type="module" src="saved-groups-ui.js"></script>
+</body>
+</html>

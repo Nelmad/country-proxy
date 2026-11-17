@@ -1,0 +1,54 @@
+.saved-groups #group-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.saved-groups #group-list li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 0;
+}
+.saved-groups #group-list li + li { border-top: 1px solid var(--line); }
+.saved-groups #group-list button, .saved-groups #group-add, .group-actions button {
+  font-size: 0.8571rem;
+  min-height: 32px;
+  padding: 5px 8px;
+}
+.saved-groups [data-connect-group] {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1px 6px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  font-weight: 650;
+}
+.saved-groups .group-title { flex: 1 1 6em; min-width: 0; overflow-wrap: anywhere; }
+.saved-groups .group-connect-cue { color: var(--accent); font-size: 0.7857rem; font-weight: 500; }
+.saved-groups [data-connect-group] small {
+  flex: 0 0 100%;
+  display: block;
+  font: 0.7857rem/1.4 ui-monospace, monospace;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.saved-groups [data-edit-group] { flex: none; }
+.saved-groups #group-hint:empty, .saved-groups #group-message:empty { display: none; }
+.saved-groups #group-editor, .saved-groups #group-add { margin-top: 8px; }
+.saved-groups #group-editor input:not([type="checkbox"]) { width: 100%; min-width: 0; }
+.saved-groups #group-members { margin-top: 5px; }
+.saved-groups .group-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+.saved-groups #group-delete { margin-left: auto; }
+
+.saved-groups #group-country-picker { margin-block: 8px; }
+.saved-groups #group-country-picker label { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
+.saved-groups #group-country-picker input[type="checkbox"] { width: 1rem; height: 1rem; flex: none; margin: 0; }
+.saved-groups #group-country-results { max-height: min(30vh, 12rem); overflow-y: auto; list-style: none; margin: 4px 0; padding: 2px; }
+.saved-groups #group-country-results label { cursor: pointer; min-height: 32px; overflow-wrap: anywhere; }
+.saved-groups #group-country-results li + li { border-top: 1px solid var(--line); }
+.saved-groups #group-delete-confirm { margin-block: 10px; }

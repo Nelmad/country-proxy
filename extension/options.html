@@ -1,1 +1,41 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Страны · Country Proxy</title><link rel="stylesheet" href="style.css"></head><body class="options"><header><div class="mark">↗</div><div><h1>Ваши страны</h1><p>Country Proxy</p></div></header><main><p>Добавьте страны, которые хотите видеть в меню. Наличие рабочего бесплатного адреса зависит от открытых источников.</p><div class="add"><select id="catalog" aria-label="Добавить страну"></select><button id="add">Добавить</button></div><ul id="countries" class="countries"></ul><button id="save" class="primary">Сохранить страны</button><p id="message" role="status"></p><footer>Страна определяется по выходу проверенного HTTPS-соединения.<br>Для работы нужен локальный помощник из комплекта расширения.</footer></main><script type="module" src="options.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Настройки · Country Proxy</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="options">
+<header class="masthead"><span class="mark" aria-hidden="true"></span><span class="product-name">Country Proxy</span></header>
+<main>
+  <h1>Настройки</h1>
+  <p class="settings-note">Добавьте часто используемые страны в избранное, чтобы выбирать их прямо в окне расширения.</p>
+  <section aria-labelledby="favorites-heading">
+    <h2 id="favorites-heading">Ваше избранное</h2>
+    <p id="empty-favorites" class="muted">Пока пусто. Добавьте страны из каталога ниже.</p>
+    <ul id="countries" class="countries"></ul>
+  </section>
+  <button id="save" class="primary">Сохранить избранное</button>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section class="options-catalog" aria-labelledby="catalog-heading">
+    <h2 id="catalog-heading">Каталог стран</h2>
+    <label for="country-search" class="field-label">Найти по названию или коду</label>
+    <input id="country-search" type="search" placeholder="Например, Норвегия, Norway или NO" autocomplete="off" spellcheck="false">
+    <p id="country-count" class="picker-count" role="status"></p>
+    <p id="catalog-keys" class="visually-hidden">Стрелки вверх и вниз перемещают по странам. Home и End переходят к первой и последней стране.</p>
+    <ul id="country-results" aria-describedby="catalog-keys" class="country-results" aria-label="Страны и территории"></ul>
+  </section>
+  <section id="group-backups" class="options-catalog" aria-labelledby="backup-title">
+    <h2 id="backup-title">Перенос групп</h2>
+    <p>Сохраните названия и страны в файл, чтобы перенести их в другой профиль Chrome.</p>
+    <button id="export-groups" type="button" disabled>Скачать группы</button>
+    <button id="import-groups" type="button" disabled>Загрузить из файла</button>
+    <input id="groups-file" type="file" accept=".json,application/json" hidden>
+    <p id="backup-result" role="status"></p>
+  </section>
+</main>
+<script type="module" src="options.js"></script>
+<script type="module" src="group-backup-ui.js"></script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "contract_id": "country-proxy-recovery-stage0-v1",
+  "frozen": true,
+  "seed": 3102026,
+  "repeats": 20,
+  "trial_deadline_s": 2.0,
+  "timing": {
+    "fast_feed_s": 0.008,
+    "slow_feed_s": 0.12,
+    "medium_country_s": 0.02,
+    "checker_s": 0.001,
+    "pool_ttl_s": 0.12,
+    "pool_interval_s": 0.04,
+    "pool_refill_budget_s": 0.32,
+    "blocked_refill_s": 0.24,
+    "pool_observe_s": 0.19,
+    "hanging_reserve_s": 0.12,
+    "fast_reserve_s": 0.005,
+    "fast_timeout_s": 0.006,
+    "slow_success_s": 0.025,
+    "discovery_deadline_s": 0.06,
+    "session_health_interval_s": 0.2,
+    "promotion_ttl_s": 1.0,
+    "idle_pool_ttl_s": 1.0,
+    "idle_pool_budget_s": 0.3
+  },
+  "counts": {
+    "dead_candidates": 4,
+    "dead_rounds": 4,
+    "scan_bound_candidates": 140
+  },
+  "cases": [
+    "feed_cold",
+    "feed_warm",
+    "country_session",
+    "reserve_starvation",
+    "reserve_hanging_first",
+    "fast_timeout_slow_success",
+    "repeated_dead_scan",
+    "discovery_cancel",
+    "scan_bounds",
+    "idle_failure_after_health",
+    "idle_failure_mid_interval",
+    "idle_failure_before_health"
+  ],
+  "statistics": {
+    "quantile": "nearest-rank",
+    "percentile": 95,
+    "censored_timeout": ">deadline",
+    "latency_summary": "completed trials with separate N; all-trial p95 null if rank exceeds completed N",
+    "noise_tolerance_ms": 100,
+    "noise_tolerance_relative": 0.1
+  },
+  "scope": "Offline injected responses; monotonic wall durations on actual product APIs. No curl, HTTP, Chrome, real TLS, real GeoIP or child processes.",
+  "scaling": "Each timing override is explicit. These are accelerated scheduling fixtures, not proportional production latency predictions. SourceCache TTL remains its product default; warm cache priming is outside the collect component measurement (included in whole-trial elapsed/deadline).",
+  "unsupported": [
+    "browserConfirmed",
+    "real network latency",
+    "persistent history warm-state",
+    "production subprocess cleanup",
+    "streaming feed end-to-end before a streaming injection seam exists"
+  ],
+  "notes": [
+    "Frozen before production behavior changes; revisions require new identity and rerunning both snapshots.",
+    "feed_* measures actual collect component, not future streaming pipeline success.",
+    "Repeated dead scan measures actual scan cost only; future history integration must be measured at Session/history admission too.",
+    "No success threshold is inferred from a baseline exhibiting the known defect. Findings are observations, not implementation acceptance.",
+    "Country Session uses a deterministic seeded shuffle scoped to that fixture; production randomization is unmodified on disk.",
+    "All endpoints below are inert fixture identities and must never be contacted.",
+    "Idle failure phase is validated against the first healthy completion anchor, actual elapsed interval fraction, no health in flight, and no intervening health start. Missed phase invalidates the trial; never counted as paired success."
+  ],
+  "idle_phase_windows": {
+    "0": [
+      0,
+      0.1
+    ],
+    "0.5": [
+      0.4,
+      0.6
+    ],
+    "0.95": [
+      0.9,
+      1.0
+    ]
+  },
+  "frozen_on": "2026-10-31",
+  "acceptance_gates": {
+    "all": {
+      "new_failure_timeout_invalid": 0,
+      "coverage_loss": 0,
+      "country_or_direct_route_violation": 0
+    },
+    "reserve_freshness": {
+      "fresh_entries_at_observation_min": 1,
+      "independent_refresh_under_refill": true,
+      "strict_due_saturation_unit_tests_required": true
+    },
+    "streaming": {
+      "first_checker_before_slow_country_completes": true,
+      "component_collect_is_not_end_to_end_gate": true
+    },
+    "reserve_race": {
+      "fast_B_starts_before_hanging_A_finishes": true,
+      "browser_confirmation_sequential": true
+    },
+    "history": {
+      "fast_then_slow_success_preserved": true,
+      "no_fewer_live_or_recovered_discoveries": true,
+      "repeated_dead_scan_component_not_history_gate": true
+    }
+  }
+}

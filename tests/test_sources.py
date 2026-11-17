@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'native'))
-from core import Candidate, curl, parse_candidates
+from core import COUNTRIES, Candidate, curl, parse_candidates
 from sources import Source, SourceCache, SOURCES, collect, fair_merge, parse_feed
 
 A = Candidate('http', '8.8.8.8', 80)
@@ -15,10 +15,11 @@ B = Candidate('socks5', '1.1.1.1', 1080)
 class FeedTests(unittest.TestCase):
     def test_generic_country_urls(self):
         for source in SOURCES:
-            for country in ('NO', 'EE', 'AT', 'JP', 'SE'):
-                url = source.for_country(country)
-                self.assertTrue(url.startswith('https://'))
-                self.assertTrue(country in url or country.lower() in url)
+            for country in sorted(COUNTRIES):
+                with self.subTest(source=source.name, country=country):
+                    url = source.for_country(country)
+                    self.assertTrue(url.startswith('https://'))
+                    self.assertTrue(country in url or country.lower() in url)
             with self.assertRaises(ValueError): source.for_country('../NO')
 
     def test_typed_tls_and_protocol_specific_list(self):
@@ -48,6 +49,34 @@ class FeedTests(unittest.TestCase):
         data = {'rows': [{'ip': '8.8.8.8', 'port': 80, 'countryCode': 'se', 'protocol': 'https'}]}
         self.assertEqual(parse_feed(source, json.dumps(data), 'SE', parse_candidates), [A])
         self.assertEqual(parse_feed(source, json.dumps(data), 'NO', parse_candidates), [])
+
+    def test_hproxy_live_array_country_and_connect_protocol(self):
+        source = next(s for s in SOURCES if s.name == 'hproxy-live')
+        good = dict(ip='8.8.8.8', port=80, country_code='jp',
+                    protocols=['https', 'http'], status='alive', tls_intercepted=False)
+        socks = {**good, 'ip': '1.1.1.1', 'port': 1080, 'protocols': ['socks5'],
+                 'tls_intercepted': None}
+        self.assertEqual(parse_feed(source, json.dumps([good, socks]), 'JP', parse_candidates), [A, B])
+        for raw in ('{"data": []}', '{}', 'null', '"http://8.8.8.8:80"'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                parse_feed(source, raw, 'JP', parse_candidates)
+
+    def test_hproxy_live_rejects_interception_stale_status_and_untrusted_fields(self):
+        source = next(s for s in SOURCES if s.name == 'hproxy-live')
+        good = dict(ip='8.8.8.8', port=80, country_code='JP',
+                    protocols=['http'], status='alive', tls_intercepted=False)
+        rows = [good, {**good, 'country_code': 'NO'}, {**good, 'country_code': None},
+                {**good, 'ip': '127.0.0.1'}, {**good, 'ip': '8.8.8.8\n1.1.1.1'},
+                {**good, 'port': True}, {**good, 'port': 65536},
+                {**good, 'protocols': 'http'}, {**good, 'protocols': [[], {}, 'file']},
+                {**good, 'status': 'recently_alive'}, {**good, 'status': None},
+                *({**good, 'tls_intercepted': flag} for flag in (True, 'false', 0, [], {})),
+                None]
+        self.assertEqual(parse_feed(source, json.dumps(rows), 'JP', parse_candidates), [A])
+        # Test each rejection alone: deduplication must not hide a bad row equal to A.
+        for row in rows[1:]:
+            with self.subTest(row=row):
+                self.assertEqual(parse_feed(source, json.dumps([row]), 'JP', parse_candidates), [])
 
     def test_fair_merge_and_dedup_cap(self):
         huge = [Candidate('http', '8.8.8.8', port) for port in range(1, 121)]
@@ -107,6 +136,31 @@ class CollectTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values,[Candidate('http','9.9.9.9',1),A,B])
         values,_=await collect('JP',fetch,parse_candidates,library,cap=999,sources=feeds,cache=SourceCache())
         self.assertEqual(len(values),120)
+
+    async def test_hproxy_live_and_github_share_allocation_and_fallback(self):
+        feeds = [s for s in SOURCES if (s.group or s.name) == 'hproxy']
+        self.assertEqual([s.name for s in feeds], ['hproxy-live', 'hproxy'])
+        self.assertEqual([s.ttl for s in feeds], [60, 300])
+        other = Source('other', 'https://example.org/other')
+        live = [dict(ip='8.8.8.8', port=80, country_code='JP', protocols=['http'],
+                     status='alive', tls_intercepted=None)]
+        live_fails = False
+        async def library(): return []
+        async def fetch(url):
+            if 'hproxy.com/api/' in url:
+                return (1, '000', '') if live_fails else (0, '200', json.dumps(live))
+            if url == other.url: return 0, '200', 'socks5://1.1.1.1:1080'
+            return 0, '200', 'http://8.8.8.8:81'
+        values, errors = await collect('JP', fetch, parse_candidates, library, cap=2,
+                                      sources=[*feeds, other], cache=SourceCache())
+        self.assertEqual(values, [A, B])
+        self.assertEqual(errors, [])
+        live_fails = True
+        values, errors = await collect('JP', fetch, parse_candidates, library, cap=2,
+                                      sources=[*feeds, other], cache=SourceCache())
+        self.assertEqual(values, [Candidate('http', '8.8.8.8', 81), B])
+        self.assertEqual(len(errors), 1)
+        self.assertIn('hproxy-live', errors[0])
 
     async def test_invalid_country_has_no_network_or_library_side_effect(self):
         async def unexpected(*args): self.fail('must validate first')

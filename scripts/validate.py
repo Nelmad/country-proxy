@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from package import release_version
 
 root=Path(__file__).resolve().parents[1]
 for folder in ['native','scripts','tests']:
@@ -14,12 +15,13 @@ for p in [*(root/'extension').glob('*.js'), *(root/'tests').glob('*.mjs')]:
     subprocess.run(['node','--check',str(p)],check=True)
 manifest=json.loads((root/'extension/manifest.json').read_text())
 assert manifest['manifest_version']==3
+release_version(manifest['version'])
 assert len(base64.b64decode(manifest['key']))>100
 for f in ['background.js','popup.html','options.html']: assert (root/'extension'/f).is_file()
-assert set(manifest['permissions'])=={'proxy','storage','nativeMessaging','alarms','privacy'}
+assert set(manifest['permissions'])=={'proxy','storage','nativeMessaging','alarms','privacy','declarativeNetRequest'}
 assert manifest.get('incognito')=='not_allowed'
 cc=json.loads((root/'extension/countries.json').read_text());assert len(cc)==249 and len(set(cc))==249
-for p in [root/'README.md',*(root/'docs').glob('*.md')]:
+for p in [root/'README.md', root/'CONTRIBUTING.md', root/'CHANGELOG.md', *(root/'docs').rglob('*.md'), *(root/'.github').rglob('*.md')]:
     for target in re.findall(r'\]\(([^)]+)\)',p.read_text()):
-        if not target.startswith(('https://','http://','#')): assert (p.parent/target).exists(),(p,target)
+        if not target.startswith(('https://','http://','#')): assert (p.parent/target.split('#',1)[0]).exists(),(p,target)
 print('Python/JS syntax, manifest, ISO catalogue and local documentation links: PASS')

@@ -10,9 +10,10 @@ import {BLOCKED} from '../extension/controller.js';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root=path.resolve(import.meta.dirname,'..');
 const cc=process.env.TEST_COUNTRY || 'NO';
+const warmReserve=process.env.TEST_RESERVE==='1';
 const manifest=JSON.parse(await fs.readFile(path.join(root,'extension/manifest.json')));
 const id=crypto.createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
-const report={at:new Date().toISOString(),country:cc,result:'INCONCLUSIVE',events:[],profile:'fresh-disposable'};
+const report={at:new Date().toISOString(),country:cc,result:'INCONCLUSIVE',events:[],profile:'fresh-disposable',warmReserve};
 await fs.mkdir(path.join(root,'.runtime'),{recursive:true});
 const temp=await fs.mkdtemp(path.join(root,'.runtime/failover-live-'));
 let browser,popup,command,worker;
@@ -40,7 +41,7 @@ try {
      if(area==='local' && changes.status) window.testEvents.push(changes.status.newValue);
    });
  });
- const state=()=>popup.evaluate(async()=>await chrome.storage.local.get(['status','enabled','selected']));
+ const state=()=>popup.evaluate(async()=>await chrome.storage.local.get(['status','enabled','selected','pool']));
  const wait=async(predicate,ms)=>{
    const until=Date.now()+ms;let last='';
    while(Date.now()<until){
@@ -48,7 +49,7 @@ try {
      assert.equal(s.selected,cc);assert.equal(s.enabled,true);
      if(s.status?.country) assert.equal(s.status.country,cc);
      if(s.status?.phase!==last){last=s.status?.phase;console.log(cc,last,s.status?.proxy?.host || '',s.status?.total || '');}
-     if(predicate(s.status))return s.status;
+     if(predicate(s.status,s))return s.status;
      await new Promise(r=>setTimeout(r,500));
    }
    return null;
@@ -56,6 +57,13 @@ try {
  await command('connect',{country:cc});
  report.initial=await wait(s=>s?.phase==='connected',240000);
  if(!report.initial) throw Error('No verified baseline proxy');
+ if(warmReserve){
+   const ready=await wait((status,s)=>status?.phase==='connected' && s.pool?.country===cc &&
+     s.pool.count>0 && s.pool.expiresAt>Date.now()+10000,300000);
+   if(!ready)throw Error('No fresh reserve alongside a Chrome-verified baseline');
+   report.initial=ready;
+ }
+
  const tracePage=await browser.newPage();
  async function trace(){
    await tracePage.goto('https://www.cloudflare.com/cdn-cgi/trace?t='+Date.now(),{timeout:55000,waitUntil:'domcontentloaded'});
@@ -63,13 +71,19 @@ try {
    assert.equal(data.loc,cc);return {country:data.loc,exitIp:data.ip};
  }
  report.before=await trace();
+ if(warmReserve){
+   report.poolBefore=(await state()).pool;
+   assert.ok(report.poolBefore?.count>0 && report.poolBefore.expiresAt>Date.now()+5000,
+     'fresh native reserve required before injecting failure');
+ }
+
  await worker.evaluate(()=>{
    self.testProxyErrors=[];self.testProxyRoutes=[];
    chrome.proxy.onProxyError.addListener(e=>self.testProxyErrors.push({at:Date.now(),error:e.error,fatal:e.fatal}));
    chrome.proxy.settings.onChange.addListener(e=>self.testProxyRoutes.push({at:Date.now(),value:e.value}));
  });
- await worker.evaluate(value=>chrome.proxy.settings.set({value,scope:'regular'}),BLOCKED);
  report.injectedAt=Date.now();
+ await worker.evaluate(value=>chrome.proxy.settings.set({value,scope:'regular'}),BLOCKED);
  try {await tracePage.goto('https://example.com/?failover='+Date.now(),{timeout:15000});report.blockedRequest=false;}
  catch {report.blockedRequest=true;}
  assert.equal(report.blockedRequest,true,'injected route must not fall back to direct');
@@ -85,11 +99,11 @@ try {
  assert.ok(report.proxyErrors.length,'must observe a real Chromium proxy error');
  assert.ok(report.automaticSearch,'must automatically start replacement');
  for(const e of post) if(e.country) assert.equal(e.country,cc);
+ for(const route of report.routes)assert.equal(route.value.mode,'fixed_servers');
+ assert.ok(report.proxyErrors.every(e=>e.fatal));
  if(report.next){
    report.after=await trace();assert.notEqual(report.after.exitIp,report.before.exitIp);
    report.secondsToReplacement=+( (report.next.updatedAt-report.injectedAt)/1000 ).toFixed(1);
-   for(const route of report.routes)assert.equal(route.value.mode,'fixed_servers');
-   assert.ok(report.proxyErrors.every(e=>e.fatal));
    report.result='PASS';
  } else {
    report.finalState=await state();

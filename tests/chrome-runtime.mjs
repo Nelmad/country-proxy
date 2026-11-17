@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
-export async function inspectRuntime(context, root, {verify=true}={}) {
+export async function inspectRuntime(context, root, {verify=true,names=['background.js','controller.js','probe.js']}={}) {
+ assert.ok(Array.isArray(names) && names.length>0 && new Set(names).size===names.length && names.every(n=>['background.js','controller.js','probe.js','traffic-gate.js'].includes(n)), 'Explicit nonempty known script list required');
  const manifest=JSON.parse(await fs.readFile(path.join(root,'extension/manifest.json')));
  const id=crypto.createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
  const url=`chrome-extension://${id}/background.js`;
@@ -25,7 +26,7 @@ export async function inspectRuntime(context, root, {verify=true}={}) {
    cdp.send('Target.sendMessageToTarget',{sessionId,message:JSON.stringify({id:n,method,params})}).catch(error=>{clearTimeout(timer);pending.delete(n);reject(error);});
   });
   await send('Debugger.enable');const result={version:await worker.evaluate(()=>chrome.runtime.getManifest().version),scripts:[]};
-  for(const name of ['background.js','controller.js']){
+  for(const name of names){
    const parsed=scripts.find(s=>s.url===`chrome-extension://${id}/${name}`);assert.ok(parsed,'missing executed '+name);
    const {scriptSource}=await send('Debugger.getScriptSource',{scriptId:parsed.scriptId});
    const disk=await fs.readFile(path.join(root,'extension',name),'utf8');const sha=s=>crypto.createHash('sha256').update(s).digest('hex');

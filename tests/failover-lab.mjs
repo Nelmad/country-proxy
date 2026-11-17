@@ -56,6 +56,9 @@ const savedProfile=process.env.TEST_SAVED_PROFILE==='1';
 const routeFailure=process.env.TEST_FAILURE==='route';
 const restart=process.env.TEST_RESTART==='1';
 const warmReserve=process.env.TEST_RESERVE==='1';
+const idleFailure=process.env.TEST_IDLE_FAILURE==='1';
+if(idleFailure && routeFailure)throw Error('Idle failure requires a physically stopped proxy');
+report.idleFailure=idleFailure;
 report.warmReserve=warmReserve;
 report.savedProfile=savedProfile;report.failure=routeFailure?'browser-route':'closed-listener';report.restart=restart;
 let browser,command,worker,popup,a,b,temp,registrationFile,registrationBackup,originalState;
@@ -158,9 +161,11 @@ asyncio.run(main())`;
    report.upstreamStillRunning=!a.closed;
    await worker.evaluate(value=>chrome.proxy.settings.set({value,scope:'regular'}),BLOCKED);
  } else await a.stop();
- try {await page.goto('https://example.com/?lab-failure='+Date.now(),{timeout:10000});report.failedRequest=false;}
- catch {report.failedRequest=true;}
- assert.equal(report.failedRequest,true,'dead endpoint must not allow a direct request');
+ if(!idleFailure){
+   try {await page.goto('https://example.com/?lab-failure='+Date.now(),{timeout:10000});report.failedRequest=false;}
+   catch {report.failedRequest=true;}
+   assert.equal(report.failedRequest,true,'dead endpoint must not allow a direct request');
+ } else report.noRequestsAfterFailure=true;
  b.enabled=true; // Never send a manual rotate/check command.
  const second=await connected(b.port,150000);
  report.replacementEndpoint={host:second.proxy.host,port:second.proxy.port};
@@ -183,7 +188,9 @@ asyncio.run(main())`;
  assert.ok(routes.some(r=>r.value.rules?.proxyForHttps?.port===9),'replacement gap must block');
  for(const r of routes)assert.equal(r.value.mode,'fixed_servers');
  const errors=events.errors.filter(e=>e.at>=report.injectedAt);
- assert.ok(errors.length);assert.ok(errors.every(e=>e.fatal),'no nonfatal/direct fallback');
+ if(!idleFailure)assert.ok(errors.length);
+ assert.ok(errors.every(e=>e.fatal),'no nonfatal/direct fallback');
+ if(idleFailure)report.automaticDetection=post.some(s=>s.phase==='confirming')?'native-health':'browser-background-error';
  for(const target of ['www.cloudflare.com:443','www.google.com:443'])assert.ok(b.hits.some(h=>h.target===target));
  report.phases=[...new Set(post.map(s=>s.phase))];report.errors=errors;report.routes=routes;
  report.secondsToReplacement=+( (Date.now()-report.injectedAt)/1000 ).toFixed(1);

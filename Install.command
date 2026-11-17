@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
+for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 python3 python3.14 python3.13 python3.12 python3.11; do
   if "$candidate" -c 'import sys; sys.exit(sys.version_info < (3,11))' 2>/dev/null; then
-    "$candidate" scripts/install.py
+    "$candidate" scripts/install.py "$@"
     printf '\nОткройте chrome://extensions → Режим разработчика → Загрузить распакованное → папка extension.\n'
     exit 0
   fi

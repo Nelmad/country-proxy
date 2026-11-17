@@ -12,8 +12,7 @@
         "-s",
         "tests",
         "-p",
-        "test_*.py",
-        "-v"
+        "test_*.py"
       ],
       "mode": "read-only",
       "requires_network": false,
@@ -24,7 +23,19 @@
       "command": [
         "node",
         "--test",
-        "tests/controller.test.js"
+        "tests/controller.test.js",
+        "tests/favorites.test.js",
+        "tests/favorites-background.test.js",
+        "tests/stop.test.js",
+        "tests/traffic-gate.test.js",
+        "tests/traffic-gate-controller.test.js",
+        "tests/saved-groups.test.js",
+        "tests/group-backup.test.js",
+        "tests/https-probe-observer.test.mjs",
+        "tests/netlog-phase.test.mjs",
+        "tests/netlog-projection.test.mjs",
+        "tests/failover-evidence.test.mjs",
+        "tests/refill-evidence.test.mjs"
       ],
       "mode": "read-only",
       "requires_network": false,

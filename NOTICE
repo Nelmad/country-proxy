@@ -1,0 +1,15 @@
+Country Proxy
+Copyright (c) 2026 Nelmad
+
+Country Proxy is distributed under the MIT License. See LICENSE.
+
+The native helper uses proxy-scraper-cli by Maximilian Feix:
+https://github.com/maximilianfeix/proxy-scraper
+The dependency is pinned in requirements.txt to commit
+b1ade5b4aa0627ccbb193dcd9d36a621c0a22aeb. Its MIT license is available at:
+https://github.com/maximilianfeix/proxy-scraper/blob/b1ade5b4aa0627ccbb193dcd9d36a621c0a22aeb/LICENSE
+
+Python dependencies are installed separately from requirements.txt; their
+source trees and installed environments are not included in this source ZIP.
+They retain their own licenses and copyright notices. The MIT license for
+Country Proxy does not replace the terms of those dependencies.

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Help and troubleshooting
+    url: https://github.com/Nelmad/country-proxy/blob/main/.github/SUPPORT.md
+    about: Read the guides and prepare a short sanitized report.
+  - name: Security reporting instructions
+    url: https://github.com/Nelmad/country-proxy/blob/main/.github/SECURITY.md
+    about: Arrange a private route before sharing vulnerability details.

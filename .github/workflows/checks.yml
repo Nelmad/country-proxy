@@ -1,0 +1,41 @@
+name: Checks
+
+'on':
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    name: Offline checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Full commit pins verified against official actions/* release tags.
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up minimum supported Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      - name: Set up Node.js LTS
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Show reviewed check contract
+        run: python3 -B scripts/check.py --list
+      # Changing project-checks.json requires reviewing commands and updating this
+      # literal digest together. Never calculate approval from the file at runtime.
+      - name: Run offline checks
+        run: python3 -B scripts/check.py --execute-reviewed 57cd7c8e1464c134e0a27e109c4d782619f88bc5e3c73ded8e3b4cc8547b0bd9

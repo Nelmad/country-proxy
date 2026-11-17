@@ -79,6 +79,45 @@ class PoolTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(p.refresh(),.2)
         self.assertEqual(live,0);self.assertLessEqual(peak,3);self.assertEqual(cancelled,3)
 
+    async def test_late_healthy_candidate_gets_full_window_next_round(self):
+        healthy=Candidate('http','8.8.4.4',80);cancelled=[]
+        async def check(c,cc,slow):
+            try:
+                await asyncio.sleep(.06 if c==B else .07 if c==healthy else 60)
+            except asyncio.CancelledError:
+                cancelled.append(c);raise
+            return result(c,cc) if c==healthy else None
+        p=self.make(check,candidates=[B,C,D,healthy]);p.budget=.1
+        await p.refresh()
+        self.assertFalse(p.entries);self.assertEqual(cancelled.count(healthy),1)
+        await p.refresh()
+        self.assertIn(healthy.key,p.entries)
+        self.assertEqual(cancelled.count(healthy),1)
+
+    async def test_unfinished_head_does_not_starve_unstarted_candidate(self):
+        healthy=Candidate('http','8.8.4.4',80);attempts=[]
+        async def check(c,cc,slow):
+            attempts.append(c)
+            if c==healthy:return result(c,cc)
+            await asyncio.sleep(60)
+        p=self.make(check,candidates=[B,C,D,healthy])
+        await p.refresh();self.assertFalse(p.entries)
+        async def reordered(cc):return [C,healthy,B,D],[]
+        p.discoverer=reordered
+        await p.refresh()
+        self.assertEqual(attempts[3],healthy);self.assertIn(healthy.key,p.entries)
+
+    async def test_pending_candidates_reconciled_with_current_feed_and_exclusions(self):
+        attempts=[]
+        async def check(c,cc,slow):
+            attempts.append(c);await asyncio.sleep(60)
+        p=self.make(check,candidates=[B,C,D]);await p.refresh()
+        self.blocked.add(B.host);attempts.clear()
+        async def discover(cc):return [B,D],[]
+        p.discoverer=discover
+        await p.refresh()
+        self.assertEqual(attempts,[D])
+
     async def test_source_failure_does_not_stop_maintenance(self):
         p=self.make()
         async def broken(cc):raise RuntimeError('offline')
@@ -94,7 +133,7 @@ class PoolTests(unittest.IsolatedAsyncioTestCase):
         self.blocked.add(B.host);p.publish();self.assertFalse(p.entries)
 
 class SessionPoolTests(unittest.IsolatedAsyncioTestCase):
-    async def test_promotes_ready_reserve_without_new_discovery(self):
+    async def test_promotes_ready_reserve_with_one_parallel_discovery_round(self):
         events=[];discovery=0;at_connected=[]
         async def discover(cc):
             nonlocal discovery
@@ -109,7 +148,8 @@ class SessionPoolTests(unittest.IsolatedAsyncioTestCase):
         try:
             await until(lambda:len(s.pool.entries)==2);before=discovery;s.nudge(True)
             await until(lambda:s.active is not None and s.active['host']!=A.host)
-            self.assertEqual(at_connected[-1],before)
+            self.assertGreaterEqual(at_connected[-1],before)
+            self.assertLessEqual(at_connected[-1],before + 1)
             self.assertIn('reserve',[e['phase'] for e in events]);self.assertFalse(s.eligible(A))
             self.assertFalse(s.eligible(Candidate('socks5',A.host,9999)))
         finally:task.cancel();await asyncio.gather(task,return_exceptions=True)
