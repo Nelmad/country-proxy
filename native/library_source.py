@@ -84,7 +84,11 @@ async def verified_fetch(url, timeout=20, headers=None):
         finally:
             writer.close()
             await writer.wait_closed()
-    return await asyncio.wait_for(request(), min(timeout, 20))
+    timeout = min(timeout, 20)
+    if timeout <= 0:
+        raise TimeoutError
+    async with asyncio.timeout(timeout):
+        return await request()
 
 
 class FetchGroup:

@@ -562,7 +562,8 @@ class ReservePool:
                 await self._changed.wait()
                 continue
             try:
-                await asyncio.wait_for(self._changed.wait(), max(0, min(deadlines) - self.clock()))
+                async with asyncio.timeout(max(0, min(deadlines) - self.clock())):
+                    await self._changed.wait()
             except TimeoutError:
                 pass
 
@@ -590,7 +591,8 @@ class ReservePool:
             if len(self.entries) >= self.LIMIT:
                 self._refill_needed.clear()
             try:
-                await asyncio.wait_for(self._refill_needed.wait(), self.interval)
+                async with asyncio.timeout(self.interval):
+                    await self._refill_needed.wait()
             except TimeoutError:
                 pass
 

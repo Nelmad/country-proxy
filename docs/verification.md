@@ -1,16 +1,67 @@
 # Проверки и ограничения
 
-Локальный срез приёмки **1.0.0 на 2026-11-17 (МСК)**. Публичные assets и статус —
-[GitHub Releases](https://github.com/Nelmad/country-proxy/releases). Hosted CI в этом
-локальном срезе **NOT RUN**; его фактический статус проверяется в
+Локальный срез приёмки **1.0.0 на 2026-11-18 (МСК)**. Релиз ещё не опубликован:
+нужны новая точная commit/source/ZIP identity, подтверждение владельца и успешный
+hosted CI исправленного кандидата. Публичный статус —
+[GitHub Releases](https://github.com/Nelmad/country-proxy/releases), проверки —
 [GitHub Actions](https://github.com/Nelmad/country-proxy/actions).
 Команды — в [CONTRIBUTING](../CONTRIBUTING.md), критерии выпуска —
 в [процессе релизов](releases.md). Сырые отчёты остаются вне Git.
 
+## Исправление отмены Python 3.11 — 18 ноября 2026 года
+
+Для прежнего commit `2904c190a850c0ed0997fc8e3bfe2f46c8ad86bf` открыт
+[PR #1](https://github.com/Nelmad/country-proxy/pull/1).
+[Hosted run 44207712139](https://github.com/Nelmad/country-proxy/actions/runs/44207712139)
+на Linux/Python 3.11.18 завершился FAIL: native-unit достиг неизменного лимита
+90 с; 227 JS tests и structure прошли. Локально на Linux/Python 3.11.2
+воспроизведена гонка `asyncio.wait_for`: завершившийся wake мог поглотить отмену
+владельца, и реальный shutdown Session/ReservePool оставался ждать очистки.
+Этот FAIL не считается временным и не переименован в PASS.
+
+Изменены только три native-файла: `core.py`, `pool.py`, `library_source.py`.
+Пять ожиданий используют `asyncio.timeout` без отдельной задачи `wait_for`.
+Сроки проверок и владение cleanup сохранены, включая прежний отказ до чтения/
+запроса при неположительном бюджете и неограниченный `process(timeout=None)`.
+Три детерминированные race-регрессии дали RED на прежнем коде/Python 3.11;
+после исправления все шесть новых регрессий GREEN. Установщик, зависимости и
+все 19 extension-файлов не менялись относительно прежнего кандидата.
+
+**Текущий offline contract: PASS — 466 Python + 227 JS = 693 tests,
+structure PASS; 3 checks, 0 failures, 0 skipped.** На замороженном исправленном
+коде полный контракт прошёл на macOS/Python 3.14.7/Node 24.20.0
+(native 14,073 с) и в локальном Linux-контейнере/Python 3.11.2/Node 24.22.3
+(native 7,553 с, nonroot, без сети). Лимит native-unit остаётся 90 с;
+digest `project-checks.json` неизменен:
+`57cd7c8e1464c134e0a27e109c4d782619f88bc5e3c73ded8e3b4cc8547b0bd9`.
+Далее обновлены только эти два документа; остальные 214 из 216 source-файлов
+сохраняют проверенные bytes/modes. **Hosted CI нового кандидата NOT RUN.**
+
+**Controlled CfT PASS за 92,044 с** на Python 3.14.7/CfT 151.0.7922.34:
+настоящие Session и ReservePool подготовили два резерва; физический отказ AT
+дал замену на EE и ordinary HTTPS 200 за 0,258 с. До задержанного Chrome proof
+ordinary HTTPS блокировался и не достигал origin; оба HTTPS-контроля и проверка
+страны оставались обязательными. Через 89,959 с после замены прошли штатные
+native/Chrome перепроверки и ещё один ordinary HTTPS. Явный Stop освободил proxy,
+снял dynamic/session DNR и оставил нулевые inflight/curl/budget requests.
+Все 14 принадлежащих прогону PID завершены, 16 прежних посторонних PID сохранены;
+основной Chrome и его регистрация не затронуты.
+
+Это локальные CONNECT/TLS с тестовой CA/SPKI, синтетической GeoIP/источником и
+явными адаптерами стенда, без нового public-run или 30-минутного soak. Прогон
+предшествовал финальным guards неположительного бюджета/`None`. Независимая
+сверка подтвердила применимость: Session.pause, ReservePool и extension совпали;
+все 24 исполненных subprocess-вызова имели положительные бюджеты 14 или 47 с,
+поэтому новые guards их не меняют. Это компонентная приёмка исполненных путей,
+а не CfT whole-build identity финального комплекта; guards отдельно покрыты
+offline-регрессиями. Live catalogue, Python 3.11 в браузере и stock Chrome этим
+прогоном не проверялись. Новый exact commit/ZIP и разрешение на его публикацию
+ещё не получены; прежнее подтверждение относилось только к старому commit.
+
 ## Приёмка startup-дельты 17 ноября 2026 года
 
 От принятой MIT-сборки изменились `extension/background.js`, `controller.js`
-и `popup.js`; native, requirements и установщик остаются прежними. Цель —
+и `popup.js`; на тот момент native, requirements и установщик оставались прежними. Цель —
 сохранить работоспособный popup и полный выбор стран при ошибке восстановления
 маршрута, не захватывать его автоматически после освобождения конкурента.
 
@@ -39,41 +90,42 @@ worker до конца episode. После освобождения rival авт
 extension совпали до/после прогона. После него в manifest изменено **только поле
 version на 1.0.0**; key, permissions и весь production-код остались теми же.
 Прежнее совпадение всех 29 extension/native файлов относится только к старому
-receipt; применимость неизменных native/install-компонентов указана ниже.
+receipt; нынешняя компонентная применимость указана ниже.
 
-**Канонический offline contract 1.0.0: PASS — 460 Python + 227 JS = 687 tests,
+**Offline contract на 17 ноября: PASS — 460 Python + 227 JS = 687 tests,
 structure PASS; 3 checks, 0 failures, 0 skipped.** Полный прогон выполнен на
 замороженных исходниках 1.0.0; все 215 source hashes совпали до/после проверки.
 Последующее изменение этих двух документов вносит только фактические результаты.
 Независимый runtime-review дал **GO** в описанном macOS/controlled CfT scope.
 
-Локальная runtime/offline-приёмка закрыта; точные reviewed release commit,
+На 17 ноября локальная runtime/offline-приёмка была закрыта; точные reviewed release commit,
 source/ZIP identity и checksum фиксируются следующим шагом упаковки. Это ещё
 не ZIP PASS, export или публикация. Hosted CI остаётся отдельным **NOT RUN**
 в этом датированном срезе, а внешний шаг требует своего подтверждения.
 
-Baseline **459 Python + 221 JS = 680 tests** ниже — прежняя MIT-сборка, а не
-итоговый счёт 1.0.0, равный 687. Точная source/ZIP identity фиксируется при упаковке.
+Baseline **459 Python + 221 JS = 680 tests** ниже — прежняя MIT-сборка;
+687 tests относятся к 17 ноября, текущий счёт — 693. Точная source/ZIP identity
+фиксируется при упаковке нового кандидата.
 
 ## Историческая приёмка и применимость прежних результатов
 
 | Дата и область | Фактический результат | Применимость к текущему кандидату |
 |---|---|---|
-| 17 ноября, MIT и упаковка | 459 Python + 221 JS = 680 tests, structure PASS. LICENSE/NOTICE включены точными байтами с hashes в ZIP; отсутствие, symlink и изменение после snapshot отклоняются | На момент MIT-сборки extension/native совпадали с принятой браузерной сборкой. Теперь изменены background/controller/popup; прежний PASS сохраняет компонентную применимость, а не full-candidate identity. |
+| 17 ноября, MIT и упаковка | 459 Python + 221 JS = 680 tests, structure PASS. LICENSE/NOTICE включены точными байтами с hashes в ZIP; отсутствие, symlink и изменение после snapshot отклоняются | На момент MIT-сборки extension/native совпадали с принятой браузерной сборкой. Позже изменены background/controller/popup и три native-файла; прежний PASS сохраняет компонентную применимость, а не full-candidate identity. |
 | 17 ноября, CI contract | 454 Python + 221 JS = 675 tests, structure PASS. Оба workflow получили актуальный статический digest; новая регрессия проверяет дрейф каждого workflow и точных байтов контракта | Check contract/runner не менялись. Hosted Ubuntu/Python 3.11 workflow здесь не запускался; локальный PASS не является hosted PASS. |
 | 17 ноября, избранное | 19 UI-сценариев PASS после исходного RED; pending Save/undo, несколько окон, retry и сохранение подключения. Дополнительный offline smoke финального CI-комплекта PASS | В том receipt все 29 extension/native файлов совпали с принятой сборкой избранного; это историческая identity до текущей startup-дельты. Набор AT/EE/NO равноправен. |
 | 17 ноября, допуск трафика | 9 основных DNR-сценариев, 18 блокировок обычных запросов, 6 route-проверок и unpacked old→new→Stop→old PASS | В прежней DNR-сборке controller/probe/gate/manifest и native совпадали; поздний writer избранного покрывался совместным сценарием ниже. Текущая startup-дельта проверена отдельными тремя controlled CfT-сценариями выше. |
 | 17 ноября, совместная runtime-приёмка | PASS за 91,972 с: два готовых резерва, физический отказ listener, настоящий pool take→accepted confirm в той же Session, ordinary HTTPS заблокирован до подтверждения и успешен после. Через 89,983 с после замены — штатные native/Chrome перепроверки и ещё один ordinary HTTPS; Stop освободил proxy и DNR | Отдельный CfT, реальные local CONNECT/TLS с тестовой CA/SPKI, синтетическая GeoIP; в том receipt совпали все 29 extension/native файлов. Это принятая прежняя композиция pool/gate, а не identity нынешнего startup-кандидата и не новый public run/soak. |
-| 16 ноября, чистая установка | Fresh-install PASS: новая постоянная папка/venv, реальные зависимости, регистрация и неизменённый helper, поиск/Stop/restart. Отдельная доступность публичного адреса за 120 с — INCONCLUSIVE | Install.command, install.py, requirements, native и manifest.key идентичны. Установка предшествовала DNR; новый permission/lifecycle покрыт отдельным unpacked сценарием. |
+| 16 ноября, чистая установка | Fresh-install PASS: новая постоянная папка/venv, реальные зависимости, регистрация и тогдашний helper, поиск/Stop/restart. Отдельная доступность публичного адреса за 120 с — INCONCLUSIVE | Install.command, install.py, requirements и manifest.key неизменны; три native-файла изменены 18 ноября. Это компонентное evidence установки, не чистая установка финального helper. Установка предшествовала DNR; новый permission/lifecycle покрыт отдельным unpacked сценарием. |
 | 16 ноября, обновление/откат | current→reinstall→0.2.0→current PASS; реальные installer и hello, группа/избранное сохранены, legacy подготовлен как single EE/off, история прочитана после возврата | Installer, зависимости, формат групп/backup и native-history идентичны. Сохранение файла истории не означает его чтение старым helper. Нет утверждения о миграции версий зависимостей. |
-| 16 ноября, controlled soak | 1800,072 с, 3 физических отказа, 30,799/31,314/51,548 с до нового ordinary HTTPS; 8 обычных проверок, 2274 наблюдения, route violations 0, одно proxy-error событие | Все 10 native-файлов и browser probe идентичны. Старый controller/background не включал нынешний DNR: этот результат подтверждает прежние таймеры/резерв, а не новую совместную композицию. |
+| 16 ноября, controlled soak | 1800,072 с, 3 физических отказа, 30,799/31,314/51,548 с до нового ordinary HTTPS; 8 обычных проверок, 2274 наблюдения, route violations 0, одно proxy-error событие | Тогда все 10 native-файлов и browser probe совпадали с прежним кандидатом; теперь три native-файла изменены. Старый controller/background не включал нынешний DNR. Это историческое evidence прежних таймеров/резерва, не soak исправленного кандидата. |
 
 Историческая компонентная сверка выполнена по точным SHA-256 сохранённых ZIP
 и реально исполненным scripts; текущие исправленные байты проверяются отдельно. Сырые receipts и карта hashes хранятся локально, не в Git.
 Ни синтетическая GeoIP стенда, ни один успешный публичный smoke не подтверждают
 постоянную доступность прокси, реальную географию loopback или SLA восстановления.
 Прежняя совместная native Session/pool + DNR приёмка закрыта для тогдашней
-сборки; текущая startup-дельта принята отдельным описанным выше CfT-прогоном. Владелец выбрал
+сборки; startup-дельта 17 ноября принята отдельным описанным выше CfT-прогоном. Владелец выбрал
 [MIT License](../LICENSE); LICENSE и NOTICE включаются в ZIP с проверкой точных
 байтов и SHA-256. Номер 1.0.0 определён, а окончательная source/ZIP identity остаётся открытой по
 [матрице stable](stable-readiness.md).

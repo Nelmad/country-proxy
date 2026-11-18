@@ -37,6 +37,8 @@ A source checkout is not itself a release. The date records package preparation;
   changes. Interrupted Stop can be retried; stale results cannot restore an old route.
 - Cold-start route errors leave the popup and favorites available. A valid saved
   selection can be retried explicitly; invalid saved intent requires reselection.
+- Python 3.11 helper shutdown and restart preserve cancellation when a wake
+  completes at the same time. Checks keep their existing deadlines and cleanup.
 
 ### Installation and documentation
 

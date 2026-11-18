@@ -116,7 +116,10 @@ async def process(argv, timeout, max_bytes=2_000_000):
         await proc.wait()
         return b''.join(chunks)
     try:
-        data = await asyncio.wait_for(bounded_read(), timeout)
+        if timeout is not None and timeout <= 0:
+            raise TimeoutError
+        async with asyncio.timeout(timeout):
+            data = await bounded_read()
         return proc.returncode, data.decode('utf-8', errors='replace')
     finally:
         await await_cleanup(asyncio.create_task(reap(proc)))
@@ -628,7 +631,10 @@ class Session:
 
     async def pause(self, seconds):
         try:
-            await asyncio.wait_for(self.wake.wait(), seconds)
+            # Keep the wait in this task: Python 3.11 wait_for can consume
+            # owner cancellation when its separate child finishes at once.
+            async with asyncio.timeout(seconds):
+                await self.wake.wait()
         except asyncio.TimeoutError:
             pass
         self.wake.clear()
