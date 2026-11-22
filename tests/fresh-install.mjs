@@ -1,5 +1,6 @@
 // Explicit clean ZIP acceptance. This installs dependencies and uses only disposable test Chrome.
-// Required: TEST_INSTALL_ZIP, absolute TEST_PYTHON; optional external PLAYWRIGHT_MODULE.
+// Required: TEST_INSTALL_ZIP, externally approved TEST_INSTALL_ZIP_SHA256,
+// absolute TEST_PYTHON; optional external PLAYWRIGHT_MODULE.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -33,46 +34,8 @@ function inside(base,p){const relative=path.relative(base,p);return relative!=='
 async function owned(p){assert.ok(inside(scratch,p),'PATH_OUTSIDE_OWNED_ROOT');assert.equal(await fs.realpath(p),p,'PATH_ALIAS');assert.equal((await fs.lstat(p)).uid,process.getuid(),'PATH_OWNER');}
 async function hashes(directory){const rows=[];for(const name of ['native','extension']){const walk=async d=>{for(const entry of (await fs.readdir(d,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){const p=path.join(d,entry.name);assert.ok(!entry.isSymbolicLink(),'SOURCE_SYMLINK');if(entry.isDirectory()){if(entry.name!=='__pycache__')await walk(p);}else if(entry.isFile() && !entry.name.endsWith('.pyc'))rows.push([path.relative(directory,p),sha(await fs.readFile(p))]);}};await walk(path.join(directory,name));}return {sha256:sha(JSON.stringify(rows)),files:rows.length};}
 
-// The child only extracts data with stdlib. Every archive path and mode is checked before writing.
-const extract=String.raw`
-import hashlib,json,os,pathlib,stat,sys,zipfile
-assert sys.version_info >= (3,11), 'PYTHON_MINIMUM'
-source=pathlib.Path(sys.argv[1]); target=pathlib.Path(sys.argv[2])
-assert source.is_absolute() and not source.is_symlink() and source.is_file()
-allowed_files={'README.md','CHANGELOG.md','CONTRIBUTING.md','Install.command','requirements.txt','package.json','project-checks.json','repo-manifest.json','AGENTS.md','CLAUDE.md','.gitignore','BUILD-MANIFEST.json'}
-allowed_roots={'extension','native','scripts','tests','docs','config','.github'}
-forbidden={'.runtime','.venv','.git','.env','.netrc','.npmrc','.pypirc','credentials','secrets','local.json','__pycache__'}
-fd=os.open(source,os.O_RDONLY|os.O_NOFOLLOW)
-with os.fdopen(fd,'rb') as stream:
- before=os.fstat(stream.fileno()); digest=hashlib.file_digest(stream,'sha256').hexdigest();stream.seek(0)
- with zipfile.ZipFile(stream) as z:
-  entries=z.infolist();assert 0<len(entries)<=3000 and sum(x.file_size for x in entries)<=67108864
-  names=set(); blobs={}; modes={}
-  for entry in entries:
-   name=entry.filename; parts=pathlib.PurePosixPath(name).parts
-   assert '\\' not in name and '\x00' not in name and not name.startswith('/') and len(parts)>=2
-   assert name=='/'.join(parts)+('/' if entry.is_dir() else '')
-   assert parts[0]=='country-proxy' and all(x not in ('','.', '..') and x.casefold() not in forbidden for x in parts)
-   relative='/'.join(parts[1:]);assert name not in names;names.add(name)
-   mode=entry.external_attr>>16;assert not stat.S_ISLNK(mode) and not entry.flag_bits&1
-   if entry.is_dir():
-    assert parts[1] in allowed_roots and (stat.S_IFMT(mode) in (0,stat.S_IFDIR));continue
-   assert stat.S_IFMT(mode) in (0,stat.S_IFREG) and entry.file_size<=8388608
-   assert (len(parts)==2 and parts[1] in allowed_files) or parts[1] in allowed_roots
-   assert pathlib.PurePosixPath(name).suffix.casefold() not in {'.pem','.key','.p12','.pfx','.kdbx','.pyc'}
-   blobs[relative]=z.read(entry); modes[relative]=stat.S_IMODE(mode)
-  build=json.loads(blobs['BUILD-MANIFEST.json']);assert build['schema_version']==1
-  assert set(blobs)-{'BUILD-MANIFEST.json'}==set(build['files'])
-  assert all(hashlib.sha256(blobs[n]).hexdigest()==v for n,v in build['files'].items())
-  assert modes['Install.command']==0o755 and all(modes[n]==0o644 for n in blobs if n!='Install.command')
-  target.mkdir(mode=0o700)
-  for relative,data in sorted(blobs.items()):
-   output=target.joinpath(*relative.split('/'));output.parent.mkdir(parents=True,exist_ok=True)
-   with output.open('xb') as out:out.write(data)
-   output.chmod(modes[relative])
- after=os.fstat(stream.fileno());assert (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)==(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns)
-print(json.dumps({'zipSHA256':digest,'files':len(blobs),'python':'.'.join(map(str,sys.version_info[:3])),'buildVersion':build['version']}))
-`;
+// Execute only the trusted checkout helper; the archive contributes data, never code.
+const extractor=path.join(root,'scripts/archive_extract.py');
 
 async function processList(){const {stdout}=await exec('/bin/ps',['-axo','uid=,pid=,ppid=,command='],{timeout:5000,maxBuffer:8*1024*1024});return stdout.split('\n').flatMap(line=>{const m=line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/);return m?[{uid:Number(m[1]),pid:Number(m[2]),ppid:Number(m[3]),command:m[4]}]:[];});}
 async function collectOwned(){if(!scratch || !app || !profile || !inside(scratch,app) || !inside(scratch,profile))return [];const rows=(await processList()).filter(r=>r.uid===process.getuid() && r.pid!==process.pid);let changed=true;const owners=new Set(rows.filter(r=>r.command.includes(app) || r.command.includes(profile)).map(r=>r.pid));for(const r of rows)if(tracked.get(r.pid)===r.command)owners.add(r.pid);while(changed){changed=false;for(const r of rows)if(owners.has(r.ppid) && !owners.has(r.pid)){owners.add(r.pid);changed=true;}}const own=rows.filter(r=>owners.has(r.pid));for(const r of own)tracked.set(r.pid,r.command);return own;}
@@ -119,30 +82,43 @@ async function ordinary(s,publicEnd){const tab=await browser.newPage();try{
 let chromium;
 async function run(){
   assert.ok(process.platform==='darwin','MACOS_REQUIRED');assert.ok(process.env.TEST_INSTALL_ZIP && process.env.TEST_PYTHON,'ZIP_AND_PYTHON_REQUIRED');assert.ok(path.isAbsolute(process.env.TEST_PYTHON),'ABSOLUTE_PYTHON_REQUIRED');
+  const expectedZipSHA256=process.env.TEST_INSTALL_ZIP_SHA256;
+  assert.match(expectedZipSHA256 || '',/^[0-9a-f]{64}$/,'EXPECTED_ZIP_SHA256_REQUIRED');
+  report.expectedZipSHA256=expectedZipSHA256;
   await fs.mkdir(path.join(root,'.runtime'),{recursive:true});receipt=await fs.mkdtemp(path.join(root,'.runtime/fresh-install-receipt-'));await fs.chmod(receipt,0o700);
   const zip=path.resolve(process.env.TEST_INSTALL_ZIP);assert.equal(await fs.realpath(zip),zip,'ZIP_ALIAS');const zipInfo=await fs.lstat(zip);assert.ok(zipInfo.isFile() && zipInfo.size<=134217728,'ZIP_TYPE_OR_SIZE');const zipBefore=await fs.readFile(zip);report.zipSHA256=sha(zipBefore);
+  assert.equal(report.zipSHA256,expectedZipSHA256,'ZIP_APPROVAL_MISMATCH');report.zipApprovalMatched=true;
   scratch=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'cp-fresh-install-'));await fs.chmod(scratch,0o700);app=path.join(scratch,"Installed app ' clean");profile=path.join(scratch,'test Chrome profile');history=path.join(scratch,'private history');await fs.mkdir(profile,{mode:0o700});await fs.mkdir(history,{mode:0o700});await owned(profile);await owned(history);
-  await mark('extract checksum-verified ZIP');const extracted=await exec(process.env.TEST_PYTHON,['-I','-B','-c',extract,zip,app],{timeout:timeout(15000),maxBuffer:65536});report.archive=JSON.parse(extracted.stdout);assert.equal(report.archive.zipSHA256,report.zipSHA256);await owned(app);assert.ok(await absent(path.join(app,'.venv')),'VENV_ALREADY_PRESENT');assert.ok(await absent(path.join(app,'.runtime')),'RUNTIME_ALREADY_PRESENT');
+  await mark('extract checksum-verified ZIP');const extracted=await exec(process.env.TEST_PYTHON,['-I','-B',extractor,zip,app],{timeout:timeout(15000),maxBuffer:65536});report.archive=JSON.parse(extracted.stdout);assert.equal(report.archive.zipSHA256,report.zipSHA256);await owned(app);assert.ok(await absent(path.join(app,'.venv')),'VENV_ALREADY_PRESENT');assert.ok(await absent(path.join(app,'.runtime')),'RUNTIME_ALREADY_PRESENT');
   manifest=JSON.parse(await fs.readFile(path.join(app,'extension/manifest.json')));assert.equal(manifest.version,report.archive.buildVersion);id=sha(Buffer.from(manifest.key,'base64')).slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));report.extension={id,version:manifest.version,minimumChrome:manifest.minimum_chrome_version};report.sourceBefore=await hashes(app);
   ({matchesEffectiveRoute,proxyConfig,BLOCKED}=await import(pathToFileURL(path.join(app,'extension/controller.js')).href));
   await mark('real Install.command with inherited PATH');report.launcherRoute='Install.command --profile --data-dir';await runInstaller();check();
   registrationPath=path.join(profile,'NativeMessagingHosts/local.country_proxy.json');await owned(path.dirname(registrationPath));const registrationInfo=await fs.lstat(registrationPath);assert.ok(registrationInfo.isFile() && !registrationInfo.isSymbolicLink());assert.equal(registrationInfo.uid,process.getuid());assert.equal(registrationInfo.mode&0o777,0o600);registrationBytes=await fs.readFile(registrationPath);const registration=JSON.parse(registrationBytes);
   assert.equal(registration.name,'local.country_proxy');assert.equal(registration.type,'stdio');assert.deepEqual(registration.allowed_origins,[`chrome-extension://${id}/`]);assert.equal(registration.path,path.join(app,'.runtime','host-'+sha(Buffer.from(profile))));await owned(path.join(app,'.runtime'));await owned(path.join(app,'.venv'));
-  const metadata=String.raw`import importlib.metadata as m,json,pathlib,re,shlex,sys
+  const metadata=String.raw`import importlib.metadata as m,json,pathlib,re,shlex,sys,hashlib
 assert sys.version_info>=(3,11)
 app=pathlib.Path(sys.argv[1]);history=sys.argv[2];wrapper=pathlib.Path(sys.argv[3]).read_text()
 lines=wrapper.splitlines();assert len(lines)==2 and lines[0]=='#!/bin/sh'
 assert shlex.split(lines[1])==['exec',str(app/'.venv/bin/python'),'-I','-B',str(app/'native/host.py'),'--data-dir',history]
-versions={};archive_verified=False
+receipt=json.loads((app/'.runtime/dependency-install.json').read_text())
+assert receipt['schemaVersion']==1
+for filename,key in [('requirements.txt','requirementsSHA256'),('build-requirements.txt','buildRequirementsSHA256')]:
+ assert hashlib.sha256((app/filename).read_bytes()).hexdigest()==receipt[key]
+versions={}
 for line in (app/'requirements.txt').read_text().splitlines():
  if not line or line.startswith('#'):continue
- if '==' in line:
-  name,want=line.split('==');actual=m.version(name);assert actual==want;versions[name]=actual
+ requirement=line.split(' --hash=',1)[0]
+ if '==' in requirement:
+  name,want=requirement.split('==');actual=m.version(name);assert actual==want;versions[name]=actual
  else:
-  name,url=line.split(' @ ');data=json.loads(m.distribution(name).read_text('direct_url.json'));want=re.search(r'#sha256=([0-9a-f]{64})$',url).group(1)
-  assert data['archive_info']['hashes']['sha256']==want;archive_verified=True
-assert archive_verified
-print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'pinnedDistributions':versions,'archiveDependencyHashVerified':archive_verified,'exactLauncherArguments':True}))`;
+  name,url=requirement.split(' @ ');want=re.search(r'#sha256=([0-9a-f]{64})$',url).group(1)
+  assert receipt['sourceArchiveSHA256']==want
+normalize=lambda n:re.sub(r'[-_.]+','-',n).lower()
+actual={normalize(d.metadata['Name']):d.version for d in m.distributions()}
+assert set(actual)==set(receipt['distributions'])|{'pip'}
+assert all(actual[n]==v for n,v in receipt['distributions'].items())
+assert receipt['buildIsolation']=='fresh-venv-with-hash-locked-backend'
+print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'pinnedDistributions':versions,'sourceArchiveHashCheckedByInstaller':True,'installerReceiptVerified':True,'exactRuntimeGraph':True,'exactLauncherArguments':True}))`;
   const installed=await exec(path.join(app,'.venv/bin/python'),['-I','-B','-c',metadata,app,history,registration.path],{timeout:timeout(15000),maxBuffer:65536});report.installedPython=JSON.parse(installed.stdout);report.registration={exactProfile:true,exactApplication:true,unchanged:true,mode:'0600'};
   ({chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright'));
   chromeExecutable=await fs.realpath(process.env.TEST_CHROME_EXECUTABLE || chromium.executablePath());assert.equal(path.basename(chromeExecutable),'Google Chrome for Testing','TEST_CHROME_ONLY');assert.ok(chromeExecutable.includes('/Google Chrome for Testing.app/Contents/MacOS/'),'TEST_CHROME_ONLY');report.browserExecutable={name:path.basename(chromeExecutable),sha256:sha(await fs.readFile(chromeExecutable)),testChromeOnly:true};

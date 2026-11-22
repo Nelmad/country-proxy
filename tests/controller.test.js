@@ -320,18 +320,27 @@ async function backgroundHarness(saved={}, nativeOptions={}) {
  const event=name=>({addListener:listener=>{listeners[name]=listener;}});
  const native={onMessage:event('nativeMessage'),onDisconnect:event('nativeDisconnect'),
   postMessage:value=>{nativeMessages.push(structuredClone(value));},disconnect:()=>{calls.push(['nativeDisconnect']);}};
- const setting={set:async value=>{calls.push(['privacySet',value]);if(nativeOptions.privacyFailure?.({value,route}))throw Error('privacy policy denied');},clear:async()=>{calls.push(['privacyClear']);}};
+ const privacySettings = Object.fromEntries(Object.entries({webRTCIPHandlingPolicy:'default',networkPredictionEnabled:true}).map(([name, initial]) => {
+  let own, overlay;
+  return [name, {onChange:event(name+'Change'),
+   get:async()=>structuredClone(overlay ?? {value:own ?? initial,levelOfControl:own === undefined?'controllable_by_this_extension':'controlled_by_this_extension'}),
+   set:async value=>{calls.push(['privacySet',value]);if(nativeOptions.privacyFailure?.({value,route}))throw Error('privacy policy denied');if(nativeOptions.privacySilentOverride?.({name,route}))overlay={value:initial,levelOfControl:'controlled_by_other_extensions'};else own=value.value;},
+   clear:async()=>{calls.push(['privacyClear']);own=undefined;},
+   override(value, notify=true){overlay=value;return notify?listeners[name+'Change']({...value}):undefined;}
+  }];
+ }));
  globalThis.chrome={
-  declarativeNetRequest: dnrFixture().api,
+  declarativeNetRequest: (nativeOptions.gate ?? dnrFixture()).api,
   storage:{local:{get:async keys=>{
+   await nativeOptions.beforeStorage?.(keys);
    if(keys==null)return structuredClone(state);
    return Object.fromEntries((typeof keys==='string'?[keys]:keys).filter(key=>key in state)
     .map(key=>[key,structuredClone(state[key])]));
-  },set:async values=>{Object.assign(state,structuredClone(values));calls.push(['save',structuredClone(values)]);}}},
+  },set:async values=>{await nativeOptions.beforeStorageWrite?.(values);Object.assign(state,structuredClone(values));calls.push(['save',structuredClone(values)]);}}},
   proxy:{settings:{get:async()=>effective(),onChange:event('routeChange'),
-   set:async({value})=>{route=structuredClone(value);calls.push(['route',route]);},
+   set:async({value})=>{await nativeOptions.beforeProxyWrite?.(value);route=structuredClone(value);calls.push(['route',route]);},
    clear:async()=>{route=null;calls.push(['clear']);}},onProxyError:event('proxyError')},
-  privacy:{network:{webRTCIPHandlingPolicy:setting,networkPredictionEnabled:setting}},
+  privacy:{network:privacySettings},
   runtime:{id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',getURL:path=>'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'+path,
    connectNative:()=>{calls.push(['nativeConnect']);
     if(nativeOptions.hello !== false)queueMicrotask(()=>listeners.nativeMessage({type:'hello',feedbackProtocol:nativeOptions.protocol ?? 1,sourceQuality:nativeOptions.sourceQuality}));
@@ -358,7 +367,7 @@ async function backgroundHarness(saved={}, nativeOptions={}) {
   // Drain startup publication/hello microtasks before exposing or restoring globals.
   await new Promise(resolve=>setImmediate(resolve));
  } catch(error){restore();throw error;}
- return {state,calls,nativeMessages,get route(){return route;},restore,waitFor,
+ return {state,calls,nativeMessages,privacySettings,get route(){return route;},restore,waitFor,
   overrideRoute(setting,notify=true){externalSetting=structuredClone(setting);if(notify)return listeners.routeChange(effective());},
   notifyRoute:change=>listeners.routeChange(change),
   send:message=>new Promise(resolve=>listeners.message(message,{id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},resolve)),
@@ -875,7 +884,7 @@ for(const action of ['connect','disconnect'])test('actual background '+action+' 
    const before=h.route;
    const original=chrome.proxy.settings.clear;chrome.proxy.settings.clear=async()=>{throw Error('clear denied');};
    const reply=await h.send({action});assert.equal(reply.ok,false);chrome.proxy.settings.clear=original;
-   assert.equal(h.state.enabled,false);assert.equal(h.state.status.phase,'stopError');assert.deepEqual(h.route,before);
+   assert.equal(h.state.enabled,false);assert.equal(h.state.status.phase,'stopError');assert.deepEqual(h.route,BLOCKED);
    assert.match(h.state.status.error,/clear denied/);
    assert.equal((await h.send({action})).ok,true);assert.equal(h.state.status.phase,'off');assert.equal(h.route,null);
   }else{
@@ -920,7 +929,7 @@ test('effective route requires ownership, all protocols and the exact bypass rul
     s=>{s.levelOfControl='controlled_by_other_extensions';}, s=>{s.value.mode='direct';},
     s=>{s.value.rules.proxyForHttp.port++;}, s=>{s.value.rules.proxyForHttps.scheme='socks4';},
     s=>{s.value.rules.fallbackProxy.scheme='https';}, s=>{s.value.rules.fallbackProxy.host='8.8.4.4';},
-    s=>{s.value.rules.bypassList.push('*');}, s=>{s.value.rules.bypassList=[];},
+    s=>{s.value.rules.bypassList.push('*');}, s=>{s.value.rules.bypassList=['<-loopback>'];},
     s=>{s.value.rules.singleProxy=candidate;}, s=>{delete s.value.rules.fallbackProxy;}
   ]) {
     const actual = setting();
@@ -1263,3 +1272,146 @@ test('supplemental 204 target is not accepted when trace gives an outside-group 
  const r=await probeBrowser(['AT','EE','NO'],new AbortController().signal,{fetcher:f.fetcher,hedgeDelayMs:5});
  assert.equal(r.ok,false);assert.equal(r.reason,'country');
 });
+
+
+for (const [name, unsafe, safe] of [['webRTCIPHandlingPolicy','default','disable_non_proxied_udp'],
+  ['networkPredictionEnabled',true,false]]) {
+ test('silent privacy override before admission closes gate: '+name, async()=>{
+  const h=await backgroundHarness({}, {beforeFetch:async()=>{
+    h.privacySettings[name].override({value:unsafe,levelOfControl:'controlled_by_other_extensions'},false);
+  }});
+  try {
+   const reply=await h.send({action:'connect',country:'SE'}); assert.equal(reply.ok,true);
+   const start=h.nativeMessages.at(-1);
+   h.emitRaw({type:'status',phase:'connected',id:start.id,country:'SE',proxy:{...candidate,country:'SE'},feedbackProtocol:1,attempt:1});
+   await h.waitFor(()=>h.state.status.phase==='error');
+   assert.match(h.state.status.error,new RegExp(name));
+   assert.deepEqual(await chrome.declarativeNetRequest.getSessionRules(),[]);
+   assert.equal(h.state.enabled,true); assert.equal(h.state.status.proxy,null);
+   assert.equal((await h.send({action:'disconnect'})).ok,true);
+   assert.equal(h.state.status.phase,'off');
+   assert.equal((await h.privacySettings[name].get()).value,unsafe,'Stop preserves foreign effective layer');
+  } finally {h.restore();}
+ });
+ test('effective safe foreign privacy remains connected; unsafe change revokes immediately: '+name, async()=>{
+  const h=await backgroundHarness();
+  try {
+   h.privacySettings[name].override({value:safe,levelOfControl:'controlled_by_other_extensions'},false);
+   await h.connect('SE');
+   await h.privacySettings[name].override({value:safe,levelOfControl:'controlled_by_other_extensions'});
+   assert.equal(h.state.status.phase,'connected');
+   h.privacySettings[name].override({value:unsafe,levelOfControl:'not_controllable'});
+   assert.deepEqual(await chrome.declarativeNetRequest.getSessionRules(),[],'revocation initiated directly in privacy callback');
+   await h.waitFor(()=>h.state.status.phase==='error');
+   assert.match(h.state.status.error,new RegExp(name));
+  } finally {h.restore();}
+ });
+}
+
+
+for (const name of ['webRTCIPHandlingPolicy','networkPredictionEnabled']) {
+ test('successful privacy set with unsafe effective override never admits a candidate: '+name, async()=>{
+  const h=await backgroundHarness({}, {privacySilentOverride:({name:setting,route})=>setting===name&&route?.rules?.proxyForHttp?.host===candidate.host});
+  try {
+   assert.equal((await h.send({action:'connect',country:'SE'})).ok,true);
+   const start=h.nativeMessages.at(-1);
+   h.emitRaw({type:'status',phase:'connected',id:start.id,country:'SE',proxy:{...candidate,country:'SE'},feedbackProtocol:1,attempt:1});
+   await h.waitFor(()=>h.state.status.phase==='error');
+   assert.match(h.state.status.error,new RegExp(name));
+   assert.deepEqual(await chrome.declarativeNetRequest.getSessionRules(),[]);
+   assert.equal(h.state.status.proxy,null);
+  } finally {h.restore();}
+ });
+}
+
+
+test('worker wake revokes admission before the first storage read, including read failure',async()=>{
+ for(const failure of [false,true]) {
+  const gate=dnrFixture({session:[{id:710005,priority:3,action:{type:'allow'},condition:{regexFilter:'^https?://'}}]});
+  let first=true;
+  const h=await backgroundHarness({}, {gate,beforeStorage:async()=>{
+   if(!first)return;first=false;
+   assert.equal(gate.state.calls[0]?.kind,'session','revoke must be issued before storage');
+   assert.deepEqual(gate.state.session,[],'old admission removed even before initial read completes');
+   if(failure)throw Error('first storage read denied');
+  }});
+  try {
+   assert.deepEqual(gate.state.session,[]);
+   assert.equal(h.state.status.phase,failure?'error':'off');
+   if(failure)assert.match(h.state.status.error,/first storage read denied/);
+  } finally {h.restore();}
+ }
+});
+
+for(const action of ['connect','disconnect']) {
+ test('late emergency proxy protection settles before explicit '+action,async()=>{
+  let delay=false;const entered=Promise.withResolvers(),finish=Promise.withResolvers();
+  const h=await backgroundHarness({}, {beforeProxyWrite:async value=>{
+   if(delay&&value.rules?.proxyForHttp?.port===9){delay=false;entered.resolve();await finish.promise;}
+  }});
+  try {
+   await h.connect('SE');delay=true;
+   h.privacySettings.networkPredictionEnabled.override({value:true,levelOfControl:'not_controllable'});
+   await entered.promise;
+   const changing=h.send(action==='connect'?{action,country:'NO'}:{action});
+   await new Promise(resolve=>setImmediate(resolve));
+   assert.notEqual(h.state.status.phase,'off');
+   finish.resolve();const result=await changing;
+   if(action==='disconnect') {
+    assert.equal(result.ok,true);assert.equal(h.route,null);assert.equal(h.state.status.phase,'off');
+   } else {
+    // Unsafe foreign privacy still prevents a new connection, but no late old
+    // protective write may run after this newer transition's cleanup/proof.
+    assert.equal(result.ok,false);assert.equal(h.state.status.phase,'error');assert.deepEqual(h.route,BLOCKED);
+   }
+  } finally {h.restore();}
+ });
+}
+
+test('unsafe notification publishes non-green while DNR revoke remains unresolved',async()=>{
+ const gate=dnrFixture();const h=await backgroundHarness({}, {gate});
+ const update=gate.api.updateSessionRules;const finish=Promise.withResolvers();let delay=true;
+ try {
+  await h.connect('SE');
+  gate.api.updateSessionRules=async changes=>{
+   if(delay&&!changes.addRules){delay=false;await finish.promise;}
+   return update(changes);
+  };
+  h.privacySettings.networkPredictionEnabled.override({value:true,levelOfControl:'not_controllable'});
+  await h.waitFor(()=>h.state.status.phase==='error');
+  await h.waitFor(()=>h.route.rules?.proxyForHttp?.port===9);
+  assert.match(h.state.status.error,/не подтверждена/);
+  const stopping=h.send({action:'disconnect'});finish.resolve();await stopping;
+  assert.equal(h.state.status.phase,'off');assert.deepEqual(gate.state.session,[]);
+ } finally {finish.resolve();h.restore();}
+});
+
+
+for(const resume of [false,true]) {
+ test('ordered intent writes keep Stop durable over an old pending Start; newer Start wins='+resume,async()=>{
+  let intercept=false;const saveEntered=Promise.withResolvers(),saveFinish=Promise.withResolvers();
+  const gate=dnrFixture();const h=await backgroundHarness({}, {gate,beforeStorageWrite:async values=>{
+   if(intercept&&values.enabled===true&&values.selected==='NO'){
+    intercept=false;saveEntered.resolve();await saveFinish.promise;
+   }
+  }});
+  const guardFinish=Promise.withResolvers();
+  try {
+   await h.connect('SE');intercept=true;
+   const oldStart=h.send({action:'connect',country:'NO'});await saveEntered.promise;
+   const update=gate.api.updateSessionRules;let delay=true;
+   gate.api.updateSessionRules=async changes=>{
+    if(delay&&!changes.addRules){delay=false;await guardFinish.promise;}
+    return update(changes);
+   };
+   const stopping=h.send({action:'disconnect'});
+   saveFinish.resolve();
+   await h.waitFor(()=>h.state.enabled===false&&h.state.status.phase==='stopping');
+   const latest=resume?h.send({action:'connect',country:'EE'}):null;
+   guardFinish.resolve();await oldStart;await stopping;if(latest)await latest;
+   assert.equal(h.state.enabled,resume);
+   assert.equal(h.state.status.phase,resume?'searching':'off');
+   if(resume)assert.equal(h.state.selected,'EE');
+  } finally {saveFinish.resolve();guardFinish.resolve();h.restore();}
+ });
+}

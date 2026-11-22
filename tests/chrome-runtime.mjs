@@ -3,11 +3,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
-export async function inspectRuntime(context, root, {verify=true,names=['background.js','controller.js','probe.js']}={}) {
- assert.ok(Array.isArray(names) && names.length>0 && new Set(names).size===names.length && names.every(n=>['background.js','controller.js','probe.js','traffic-gate.js'].includes(n)), 'Explicit nonempty known script list required');
+export async function inspectRuntime(context, root, {verify=true,names=['background.js','controller.js','probe.js'],workerName='background.js'}={}) {
+ assert.ok(Array.isArray(names) && names.length>0 && new Set(names).size===names.length && names.every(n=>['background.js','controller.js','probe.js','traffic-gate.js','privacy-guard.js','special-destinations.js'].includes(n)), 'Explicit nonempty known script list required');
  const manifest=JSON.parse(await fs.readFile(path.join(root,'extension/manifest.json')));
  const id=crypto.createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
- const url=`chrome-extension://${id}/background.js`;
+ assert.ok(['background.js','runtime-startup-fixture.js'].includes(workerName), 'Explicit known worker entry required');
+ const url=`chrome-extension://${id}/${workerName}`;
  const worker=context.serviceWorkers().find(w=>w.url()===url) || await context.waitForEvent('serviceworker',{predicate:w=>w.url()===url,timeout:20000});
  const cdp=await context.browser().newBrowserCDPSession();let sessionId;
  try {

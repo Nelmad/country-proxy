@@ -176,7 +176,7 @@ launcher использует готовый venv и читает предыду
 
 ```sh
 python3 -B tests/history-benchmark.py --before /absolute/path/to/previous-snapshot --output /absolute/path/to/local/history.json
-TEST_BASELINE_ROOT=/absolute/path/to/previous-bundle .venv/bin/python -B tests/install-runtime.py
+TEST_RUNTIME_PYTHON=/absolute/path/to/installed-bundle/.venv/bin/python TEST_BASELINE_ROOT=/absolute/path/to/previous-bundle python3 -B tests/install-runtime.py
 ```
 
 Для сравнения порядка источников используйте один и тот же стенд на двух
@@ -203,7 +203,7 @@ registration и helper после установки не подменяются
 
 ```sh
 python3.14 scripts/package.py
-TEST_PYTHON=/absolute/path/to/python3.14 TEST_INSTALL_ZIP=/absolute/path/to/country-proxy-1.0.0.zip node tests/fresh-install.mjs
+TEST_PYTHON=/absolute/path/to/python3.11 TEST_INSTALL_ZIP=/absolute/path/to/country-proxy-1.0.1.zip TEST_INSTALL_ZIP_SHA256='approved-64-hex-sha256' node tests/fresh-install.mjs
 ```
 
 `TEST_PYTHON` обязателен и задаёт абсолютный путь к Python 3.11+ для проверок архива; `PLAYWRIGHT_MODULE` —
@@ -477,3 +477,28 @@ python3 scripts/install.py --profile "$PWD/.runtime/chrome-test" --data-dir "$PW
 личные действия в браузере и локальные административные процедуры сюда не добавляйте.
 Цели, приоритеты и планы ведутся в базе знаний проекта; технические инструкции
 не дублируются там целиком. Сырые evidence остаются вне Git.
+
+## Дополнительные регрессии приёмки 1.0.1
+
+`TEST_INSTALL_ZIP_SHA256` — точный SHA-256 из отдельно проверенной identity
+кандидата или checksum доверенного опубликованного выпуска. Самостоятельное
+вычисление checksum произвольного архива не заменяет проверку его происхождения.
+Несовпадение или отсутствие expected SHA останавливает fresh-install до распаковки
+и исполнения кода архива.
+
+Installed launcher fixture создаёт настоящий отдельный venv и копирует runtime
+пакеты из указанного уже установленного `TEST_RUNTIME_PYTHON`, без pip/скачиваний.
+Исходный venv и baseline не меняются. Для конкретного поддержанного
+интерпретатора задайте `TEST_PYTHON` явно.
+
+В install-lifecycle отсутствие внешнего prerequisite для optional HTTPS
+отмечается отдельно. Ошибки команды подключения, маршрута, assertions и cleanup
+после запуска HTTPS-фазы дают FAIL, а не INCONCLUSIVE.
+
+Дополнительно `tests/preconfirm-traffic-lab.mjs --health-negative` проверяет
+отзыв допуска и восстановление того же endpoint через новый Chrome proof.
+Задайте `CHROME_TEST_EXECUTABLE` только к Chrome for Testing, `TEST_PYTHON`
+и при внешней зависимости `PLAYWRIGHT_MODULE` абсолютными путями.
+Используются синтетические native health/GeoIP, настоящие CONNECT/TLS и отдельный
+временный профиль. Публичная география этим не подтверждается. Полный controlled
+набор запускается без `--health-negative`.

@@ -5,12 +5,13 @@ import json
 import os
 import re
 import stat
+import tempfile
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = (
     'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'NOTICE', 'Install.command',
-    'requirements.txt', 'package.json', 'project-checks.json',
+    'requirements.txt', 'build-requirements.txt', 'package.json', 'project-checks.json',
     'repo-manifest.json', 'AGENTS.md', 'CLAUDE.md', '.gitignore',
 )
 SOURCE_DIRS = ('extension', 'native', 'scripts', 'tests', 'docs', 'config', '.github')
@@ -111,16 +112,37 @@ def build(root=ROOT):
     checksum = output.with_suffix(output.suffix + '.sha256')
     if output.is_symlink() or checksum.is_symlink():
         raise ValueError('Package output must not be a symlink')
-    with ZipFile(output, 'w', compression=ZIP_DEFLATED, compresslevel=9) as archive:
-        for name, data in sorted(contents.items()):
-            info = ZipInfo('country-proxy/' + name, date_time=FIXED_TIME)
-            info.create_system = 3
-            info.compress_type = ZIP_DEFLATED
-            mode = 0o755 if name == 'Install.command' else 0o644
-            info.external_attr = (stat.S_IFREG | mode) << 16
-            archive.writestr(info, data, compresslevel=9)
-    digest = hashlib.sha256(output.read_bytes()).hexdigest()
-    checksum.write_text(f'{digest}  {output.name}\n', encoding='utf-8')
+    staged = []
+    try:
+        descriptor, temporary = tempfile.mkstemp(prefix=output.name+'.', suffix='.tmp', dir=destination)
+        staged.append(Path(temporary))
+        with os.fdopen(descriptor, 'w+b') as stream:
+            with ZipFile(stream, 'w', compression=ZIP_DEFLATED, compresslevel=9) as archive:
+                for name, data in sorted(contents.items()):
+                    info = ZipInfo('country-proxy/' + name, date_time=FIXED_TIME)
+                    info.create_system = 3
+                    info.compress_type = ZIP_DEFLATED
+                    mode = 0o755 if name == 'Install.command' else 0o644
+                    info.external_attr = (stat.S_IFREG | mode) << 16
+                    archive.writestr(info, data, compresslevel=9)
+            stream.flush()
+            os.fsync(stream.fileno())
+            stream.seek(0)
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            os.fchmod(stream.fileno(), 0o644)
+        descriptor, temporary = tempfile.mkstemp(prefix=checksum.name+'.', suffix='.tmp', dir=destination)
+        staged.append(Path(temporary))
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(f'{digest}  {output.name}\n'.encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o644)
+        # Never truncate an existing output inode (it may have another hardlink).
+        os.replace(staged[0], output)
+        os.replace(staged[1], checksum)
+    finally:
+        for temporary in staged:
+            temporary.unlink(missing_ok=True)
     return output
 
 

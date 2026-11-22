@@ -85,9 +85,11 @@ class PackageTests(unittest.TestCase):
             self.assertFalse(any('private' in name or '.pyc' in name or '.DS_Store' in name
                                  for name in archive.namelist()))
 
-    def test_legal_files_ship_exact_bytes_and_manifest_hashes(self):
+    def test_legal_and_dependency_locks_ship_exact_bytes_and_manifest_hashes(self):
         expected = {'LICENSE': b'MIT License\r\n\r\nCopyright (c) 2026 Fixture\r\n',
-                    'NOTICE': 'Third-party notices\nТочный текст.\n'.encode()}
+                    'NOTICE': 'Third-party notices\nТочный текст.\n'.encode(),
+                    'requirements.txt': b'fixture-runtime==1.0 --hash=sha256:fixture\n',
+                    'build-requirements.txt': b'fixture-build==1.0 --hash=sha256:fixture\n'}
         for name, body in expected.items():
             (self.root / name).write_bytes(body)
         with ZipFile(package.build(self.root)) as archive:
@@ -98,7 +100,7 @@ class PackageTests(unittest.TestCase):
                     self.assertEqual(manifest['files'][name], hashlib.sha256(body).hexdigest())
 
     def test_missing_legal_file_fails_before_creating_artifact(self):
-        for name in ('LICENSE', 'NOTICE'):
+        for name in ('LICENSE', 'NOTICE', 'requirements.txt', 'build-requirements.txt'):
             with self.subTest(name=name):
                 path = self.root / name
                 original = path.read_bytes() if path.exists() else None
@@ -112,7 +114,7 @@ class PackageTests(unittest.TestCase):
     def test_symlink_legal_file_is_rejected_without_reading_target(self):
         target = self.root / 'README.md'
         original_target = target.read_bytes()
-        for name in ('LICENSE', 'NOTICE'):
+        for name in ('LICENSE', 'NOTICE', 'requirements.txt', 'build-requirements.txt'):
             with self.subTest(name=name):
                 path = self.root / name
                 original = path.read_bytes() if path.exists() else None
@@ -166,6 +168,25 @@ class PackageTests(unittest.TestCase):
                       '0.2.1-rc.1', '１.2.3', '0.2.1\n', None, 1):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'version'):
                 package.release_version(value)
+
+    def test_existing_hardlinked_zip_and_checksum_are_replaced_without_modifying_other_links(self):
+        destination = self.root/'dist'
+        destination.mkdir()
+        output = destination/'country-proxy-0.2.1.zip'
+        checksum = output.with_suffix('.zip.sha256')
+        foreign_zip = self.root/'README.md'
+        foreign_checksum = self.root/'NOTICE'
+        before = {path:path.read_bytes() for path in (foreign_zip, foreign_checksum)}
+        os.link(foreign_zip, output)
+        os.link(foreign_checksum, checksum)
+        package.build(self.root)
+        for path, body in before.items():
+            self.assertEqual(path.read_bytes(), body)
+        self.assertNotEqual(output.stat().st_ino, foreign_zip.stat().st_ino)
+        self.assertNotEqual(checksum.stat().st_ino, foreign_checksum.stat().st_ino)
+        with ZipFile(output) as archive:
+            self.assertIsNone(archive.testzip())
+        self.assertEqual(checksum.read_text().split()[0], hashlib.sha256(output.read_bytes()).hexdigest())
 
     def test_output_symlink_is_rejected(self):
         (self.root / 'dist').mkdir()

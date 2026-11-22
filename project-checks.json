@@ -35,7 +35,9 @@
         "tests/netlog-phase.test.mjs",
         "tests/netlog-projection.test.mjs",
         "tests/failover-evidence.test.mjs",
-        "tests/refill-evidence.test.mjs"
+        "tests/refill-evidence.test.mjs",
+        "tests/popup-status.test.js",
+        "tests/admission-revocation.test.js"
       ],
       "mode": "read-only",
       "requires_network": false,

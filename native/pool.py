@@ -119,7 +119,17 @@ class ReservePool:
             reason = 'outsideGroup'
         else:
             reason = None
-        for reserve_id, (key, entry, token, generation, stage) in operation['leases'].items():
+        for reserve_id in operation['leases']:
+            leases = [lease for owner, lease in operation['lease_owners'].get(reserve_id, {}).items()
+                      if (not owner.cancelling() and lease[3] == self._generation
+                          and self._reserve_ids.get(lease[0]) == reserve_id
+                          and self._tokens.get(lease[0]) is lease[2]
+                          and self.entries.get(lease[0]) is lease[1])]
+            if not leases:
+                continue  # Other callers may keep a cancelled owner's physical check alive.
+            # Fence every waiter before choosing its stage: a late stale waiter
+            # sharing this UUID must not hide a still-current maintenance owner.
+            key, entry, token, generation, stage = leases[-1]
             if (generation == self._generation and self._reserve_ids.get(key) == reserve_id
                     and self._tokens.get(key) is token and self.entries.get(key) is entry):
                 if reason is None:
@@ -128,6 +138,18 @@ class ReservePool:
                     self._lease_checks.pop(reserve_id, None)
                 else:
                     self._lease_checks[reserve_id] = (stage, reason, detail)
+                    # Session has already remembered this endpoint's failure.
+                    # If that made it ineligible, another reader can prune the
+                    # lease before the shield owner resumes. Preserve the host
+                    # pause now, with the same exact ownership fence as its cause.
+                    # An expired lease and a cancelled check remain inconclusive.
+                    active = self.active()
+                    if (any(lease[4] == 'maintenance' for lease in leases)
+                            and self.clock() - entry[1] < self.ttl
+                            and entry[0]['country'] in self.countries
+                            and not (active and self.conflicts(entry[0], active))
+                            and not self.eligible(candidate(entry[0]))):
+                        self.exclude(candidate(entry[0]), 60)
 
     def _record_removal(self, entry, reserve_id, stage, reason, check=None):
         self._removal_id += 1
@@ -197,7 +219,7 @@ class ReservePool:
             operation = self._probes.get(item.key)
         if operation is None:
             checker = self.refill_checker if speculative else self.checker
-            operation = {'owners': 0, 'released': asyncio.Event(), 'leases': {}}
+            operation = {'owners': 0, 'released': asyncio.Event(), 'leases': {}, 'lease_owners': {}}
             async def check():
                 try:
                     if not speculative and self.report_checker is not None:
@@ -215,11 +237,14 @@ class ReservePool:
                     operation['at'] = self.clock()
             operation['task'] = asyncio.create_task(check())
             self._probes[item.key] = operation
+        reserve_id = None
+        owner = asyncio.current_task()
         if lease is not None:
             key, entry, token, generation, stage = lease
             reserve_id = self._reserve_ids.get(key)
             if reserve_id is not None:
                 operation['leases'][reserve_id] = lease
+                operation['lease_owners'].setdefault(reserve_id, {})[owner] = lease
         operation['owners'] += 1
         observed = False
         def observe(result):
@@ -243,6 +268,8 @@ class ReservePool:
                 observe(None)
             return None
         finally:
+            if reserve_id is not None:
+                operation['lease_owners'][reserve_id].pop(owner, None)
             task = operation['task']
             # The checker can finish before this shield owner is scheduled. A
             # winner canceling the owner must not erase that genuine runner-up.
@@ -377,9 +404,22 @@ class ReservePool:
     async def _refresh_one(self, key, entry, token, generation):
         proxy, _ = entry
         result = await self.verify(candidate(proxy), lease=(key, entry, token, generation, 'maintenance'))
+        # Failures without endpoint quarantine (e.g. country mismatch or a
+        # legacy checker) still need a host pause. Do this before prune, while
+        # the lease is current, without extending an already applied pause.
+        active = self.active()
+        if (not result and generation == self._generation and self._tokens.get(key) is token
+                and self.entries.get(key) is entry and self.clock() - entry[1] < self.ttl
+                and proxy['country'] in self.countries and not (active and self.conflicts(proxy, active))
+                and self.eligible(candidate(proxy))):
+            self.exclude(candidate(proxy), 60)
         self.prune()
         if (generation != self._generation or self._tokens.get(key) is not token
                 or self.entries.get(key) is not entry):
+            # Prune may have consumed this failure after its host pause. Publish
+            # the resulting vacancy even when there is no lease left to refresh.
+            if generation == self._generation:
+                self.publish_snapshot()
             return
         reserve_id = self._reserve_ids[key]
         observation = self._lease_checks.get(reserve_id)
@@ -390,8 +430,6 @@ class ReservePool:
             self.counts['removed'] += 1
             stage, reason, detail = observation or ('maintenance', reason or 'unknown', None)
             self._record_removal(entry, reserve_id, stage, reason, detail)
-            if not result:
-                self.exclude(candidate(proxy), 60)
         self.publish()
 
     def _start_refresh(self, key):

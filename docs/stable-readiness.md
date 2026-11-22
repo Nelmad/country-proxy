@@ -1,5 +1,28 @@
 # Первый stable: границы и приёмка
 
+На 20 ноября 2026 [v1.0.0](https://github.com/Nelmad/country-proxy/releases/tag/v1.0.0)
+опубликован из `main`, commit `2daa170d908a36d20bdf38125f2f938232c39941`.
+[PR CI 44212709572](https://github.com/Nelmad/country-proxy/actions/runs/44212709572),
+[main CI 44212975982](https://github.com/Nelmad/country-proxy/actions/runs/44212975982) и
+[draft 44213149872](https://github.com/Nelmad/country-proxy/actions/runs/44213149872)
+завершились **success**. Точные ссылки на commit, ZIP/checksum и ограничения —
+в [verification](verification.md). Версия **1.0.1 подготовлена 22 ноября, но ещё не
+опубликована**; локальная приёмка — в [датированной сводке](verification.md#current-candidate).
+Hosted CI итогового commit проверяется в Checks соответствующего
+[PR](https://github.com/Nelmad/country-proxy/pulls). Merge, тег и публикация —
+отдельные шаги; прежний release не заменяется.
+
+Договор исправляемого кандидата дополнительно сохраняет специальный запрет
+локальных URL после подключения, проверяет эффективные privacy settings и
+инициирует ранний отзыв допуска при конфликте. Он не обещает атомарной реакции
+на внешнего владельца или блокировки любого DNS-имени с private IP.
+[Точная граница и действия пользователя](runbook.md#локальные-адреса-и-конфликт-настроек).
+
+## Исторический срез перед выпуском — 18 ноября 2026
+
+Ниже сохранено состояние подготовки на указанную дату, включая ещё не выполненные
+тогда шаги. «Текущий кандидат» в этом срезе означает кандидат 18 ноября.
+
 Scope зафиксирован 16 ноября; статус обновлён **18 ноября 2026 года**.
 Исправленный кандидат прошёл локальный offline contract на macOS и Linux:
 **466 Python + 227 JS = 693 tests, structure PASS; 3 checks, 0 failures, 0 skipped**.

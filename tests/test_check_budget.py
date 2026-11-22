@@ -483,7 +483,9 @@ class SessionBudgetTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_session_transitions_and_finally_closes_allocator(self):
         item = Candidate('http', '1.1.1.1', 8080)
         connected, replacing = asyncio.Event(), asyncio.Event()
-        observations = []
+        reserve_started, cleanup_entered, cleanup_release, drained = (asyncio.Event() for _ in range(4))
+        reacquiring = asyncio.Event()
+        observations, acquisitions = [], []
         async def discover(country):
             return [item], []
         async def checker(candidate, country, slow):
@@ -499,21 +501,54 @@ class SessionBudgetTests(unittest.IsolatedAsyncioTestCase):
             async def take(self):
                 return None
             async def run(self):
-                await asyncio.Future()
+                async def held_reserve():
+                    reserve_started.set()
+                    try:
+                        await asyncio.Future()
+                    finally:
+                        cleanup_entered.set()
+                        await cleanup_release.wait()
+                        drained.set()
+                await session.check_budget.run('held-reserve', False, 'reserve', held_reserve)
             def publish(self):
                 pass
         session = Session('NO', emit, discoverer=discover, checker=checker,
                           pool_factory=Pool, interval=60, retry=60)
+        acquire = session.acquire
+        async def observed_acquire():
+            acquisitions.append((drained.is_set(), session.check_budget.snapshot))
+            if len(acquisitions) == 2:
+                reacquiring.set()
+            return await acquire()
+        session.acquire = observed_acquire
         task = asyncio.create_task(session.run())
         try:
             await asyncio.wait_for(connected.wait(), 1)
+            await asyncio.wait_for(reserve_started.wait(), 1)
             session.nudge(rotate=True)
             await asyncio.wait_for(replacing.wait(), 1)
+            await asyncio.wait_for(cleanup_entered.wait(), 1)
+            # Withdrawal must not wait for cleanup; the cancelling reserve still
+            # owns its slot, and foreground reacquisition must not overlap it.
+            self.assertEqual(observations, [('connected', True), ('replacing', True)])
+            self.assertEqual(len(acquisitions), 1)
+            self.assertFalse(reacquiring.is_set())
+            self.assertFalse(drained.is_set())
+            self.assertEqual(session.check_budget.snapshot, {
+                'active': True, 'closed': False, 'running': 1, 'requests': 1,
+                'roles': {'health': 0, 'reserve': 1, 'speculative': 0}})
+            cleanup_release.set()
+            await asyncio.wait_for(reacquiring.wait(), 1)
+            self.assertEqual(acquisitions[1], (True, {
+                'active': False, 'closed': False, 'running': 0, 'requests': 0,
+                'roles': {'health': 0, 'reserve': 0, 'speculative': 0}}))
         finally:
+            cleanup_release.set()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         self.assertIn(('connected', True), observations)
-        self.assertIn(('replacing', False), observations)
+        self.assertIn(('replacing', True), observations)
+        self.assertFalse(session.check_budget.snapshot['active'])
         self.assertTrue(session.check_budget.snapshot['closed'])
         self.assertEqual(session.check_budget.snapshot['running'], 0)
         self.assertEqual(session.check_budget.snapshot['requests'], 0)

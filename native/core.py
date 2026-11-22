@@ -206,8 +206,10 @@ async def inspect_proxy(candidate, country, slow=False, *, extras=None):
     countries = country_codes(country)
     started = time.monotonic()
     supplemental = extras is not None and slow
+    country_rejection = None
 
     async def inspect_attempt(endpoint, url, expected):
+        nonlocal country_rejection
         def failure(reason, **detail):
             return {'ok': False, 'reason': reason, 'endpoint': endpoint, **detail}
         try:
@@ -234,7 +236,10 @@ async def inspect_proxy(candidate, country, slow=False, *, extras=None):
         except ValueError:
             return failure('invalid_trace')
         if fields['loc'] not in countries:
-            return failure('country', country=fields['loc'])
+            # Retain parsed evidence even while this control is draining a
+            # sibling transfer. No unfinished trace is awaited to obtain it.
+            country_rejection = failure('country', country=fields['loc'])
+            return country_rejection
         return {'ok': True, 'country': fields['loc'], 'exitIp': fields['ip']}
 
     async def inspect_control(endpoint, url, expected):
@@ -277,6 +282,8 @@ async def inspect_proxy(candidate, country, slow=False, *, extras=None):
         def completed_failure():
             # Callback queue order cannot hide a completed security/control
             # rejection behind another connection's successful response.
+            if country_rejection is not None:
+                return country_rejection
             for attempt in owned:
                 if attempt is not timer and attempt.done() and not attempt.cancelled():
                     result = attempt.result()
@@ -339,15 +346,9 @@ async def inspect_proxy(candidate, country, slow=False, *, extras=None):
                 for completed in asyncio.as_completed(tasks):
                     result = await completed
                     if not result['ok']:
-                        return {**result, 'latencyMs': round((time.monotonic() - started) * 1000)}
+                        break
         except TimeoutError:
-            return {'ok': False, 'reason': 'timeout',
-                    'latencyMs': round((time.monotonic() - started) * 1000)}
-        trace = tasks[0].result()
-        proxy = {**asdict(candidate), 'country': trace['country'], 'exitIp': trace['exitIp'],
-                 'latencyMs': round((time.monotonic() - started) * 1000),
-                 'checkedAt': int(time.time() * 1000)}
-        return {'ok': True, 'proxy': proxy}
+            result = {'ok': False, 'reason': 'timeout'}
     finally:
         pending = [task for task in tasks if not task.done()]
         for task in pending:
@@ -355,6 +356,18 @@ async def inspect_proxy(candidate, country, slow=False, *, extras=None):
                 task.cancel()
         if pending:
             await await_cleanup(asyncio.gather(*pending, return_exceptions=True))
+    # Prefer explicit country evidence from either completed trace transfer,
+    # including one observed during the already-required cleanup. A transport
+    # failure still cancels an unfinished trace immediately; no extra wait or
+    # retry is introduced to gather evidence. Owner cancellation propagates.
+    result = country_rejection if country_rejection is not None else result
+    if not result['ok']:
+        return {**result, 'latencyMs': round((time.monotonic() - started) * 1000)}
+    trace = tasks[0].result()
+    proxy = {**asdict(candidate), 'country': trace['country'], 'exitIp': trace['exitIp'],
+             'latencyMs': round((time.monotonic() - started) * 1000),
+             'checkedAt': int(time.time() * 1000)}
+    return {'ok': True, 'proxy': proxy}
 
 
 async def check(candidate, country, slow=False):
@@ -581,7 +594,7 @@ class Session:
             report = await probe
             if report.get('ok') or confirming_failure:
                 self.remember_check(item, {}, report)
-            return report.get('proxy')
+            return report
         finally:
             for task in (probe, rotate):
                 if not task.cancelling():
@@ -785,26 +798,42 @@ class Session:
                     self.pool_task = asyncio.create_task(self.pool.run())
                 await self.pause(self.interval)
                 candidate = Candidate(self.active['scheme'], self.active['host'], self.active['port'])
-                result = None if self.force_rotate else await self.health(candidate, confirming_failure=failures > 0)
+                report = None if self.force_rotate else await self.health(candidate, confirming_failure=failures > 0)
+                result = report.get('proxy') if report else None
+                # This is evidence for this exact active offer, not a delta of
+                # cumulative diagnostics. Never expose internal check metadata.
+                health = {key: report[key] for key in ('ok', 'reason', 'endpoint', 'country', 'code', 'status')
+                          if report is not None and key in report}
                 # A browser rejection can arrive while the native health request is still in flight.
                 if self.force_rotate:
                     result = None
                 if result:
                     failures = 0
+                    compatibility_changed = ((self.active['host'], self.active['exitIp']) !=
+                                             (result['host'], result['exitIp']))
                     self.active = result
-                    self.emit({'phase': 'connected', 'proxy': result})
+                    if compatibility_changed:
+                        # Health can change this endpoint's egress. Reconcile
+                        # leases and publish their current count before the
+                        # connected event carries the new active exit.
+                        self.pool.publish()
+                    self.emit({'phase': 'connected', 'proxy': result, 'health': health})
                 else:
                     failures += 1
                     if self.force_rotate or failures >= 2:
                         self.exclude(candidate)
+                        # Withdrawal is safety evidence, not a cleanup receipt.
+                        # Tell Chrome before cancellation/budget drains can wait;
+                        # old browser feedback must not reconfirm this attempt.
+                        self.force_rotate = True
+                        self.emit({'phase': 'replacing', 'proxy': None, 'attempt': self.offer_attempt, 'health': health})
                         await self.stop_pool()
                         self.previous = self.active
                         await self.check_budget.set_active(False)
                         self.active, self.force_rotate = None, False
-                        self.emit({'phase': 'replacing', 'proxy': None, 'attempt': self.offer_attempt})
                         self.pool.publish()
                     else:
-                        self.emit({'phase': 'confirming', 'proxy': self.active})
+                        self.emit({'phase': 'confirming', 'proxy': self.active, 'health': health})
         finally:
             try:
                 await self.stop_pool()

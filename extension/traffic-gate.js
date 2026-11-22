@@ -1,7 +1,8 @@
+import {SPECIAL_RULE_IDS, specialDestinationRules} from './special-destinations.js';
 // Persistent protection with a browser-session-only admission. A browser restart
 // drops the admission before JavaScript runs, while the network block survives.
 // DNR does not queue requests or recall requests already sent before a transition.
-const DYNAMIC_IDS = [710001, 710002, 710003, 710004];
+const DYNAMIC_IDS = [710001, 710002, 710003, 710004, ...SPECIAL_RULE_IDS];
 const SESSION_IDS = [710005, 710006];
 const NETWORK = '^(https?|wss?)://';
 const errorText = error => String(error?.message || error).replace(/gate=[a-f0-9]{32}/gi, 'gate=<hidden>');
@@ -27,7 +28,7 @@ export function gateRules(extensionId, capability) {
   return {
     dynamic: [broad(DYNAMIC_IDS[0], 'block', 1), broad(DYNAMIC_IDS[1], 'block', 1, true),
       probe(DYNAMIC_IDS[2], '^https://www\\.cloudflare\\.com/cdn-cgi/trace\\?t=[0-9]+(&attempt=2)?&gate=' + capability + '$'),
-      probe(DYNAMIC_IDS[3], '^https://www\\.google\\.com/generate_204\\?t=[0-9]+(&attempt=2)?&gate=' + capability + '$')],
+      probe(DYNAMIC_IDS[3], '^https://www\\.google\\.com/generate_204\\?t=[0-9]+(&attempt=2)?&gate=' + capability + '$'), ...specialDestinationRules()],
     session: [broad(SESSION_IDS[0], 'allow', 3), broad(SESSION_IDS[1], 'allow', 3, true)]
   };
 }
@@ -36,10 +37,10 @@ export class TrafficGate {
   constructor(dnr, extensionId) {
     validExtensionId(extensionId);
     this.dnr = dnr; this.extensionId = extensionId; this.rules = null; this.probeCapability = null;
-    this.epoch = 0; this.tail = Promise.resolve();
+    this.epoch = 0; this.tail = Promise.resolve(); this.revocation = Promise.resolve();
   }
   queue(fn) {
-    const task = this.tail.then(fn); this.tail = task.catch(() => {}); return task;
+    const task = this.tail.then(async () => { await this.revocation; return fn(); }); this.tail = task.catch(() => {}); return task;
   }
   async verify(open) {
     if (!this.rules) throw Error('Удержание трафика ещё не установлено');
@@ -52,6 +53,18 @@ export class TrafficGate {
   }
   async removeAdmission() {
     await this.dnr.updateSessionRules({removeRuleIds: SESSION_IDS});
+  }
+  revoke() {
+    // Independent APIs cannot make a proxy takeover atomic with DNR. Start the
+    // removal NOW, before any controller/gate queue or native shutdown wait.
+    ++this.epoch; this.probeCapability = null;
+    let removal;
+    try { removal = Promise.resolve(this.removeAdmission()); }
+    catch (error) { removal = Promise.reject(error); }
+    // The per-operation error must remain observable immediately. Its failure
+    // must not shorten the separate completion barrier for earlier removals.
+    this.revocation = Promise.allSettled([this.revocation, removal]).then(() => undefined);
+    return removal;
   }
   hold() {
     const epoch = ++this.epoch;
@@ -110,7 +123,13 @@ export class TrafficGate {
       }
     });
   }
-  assertOpen() { return this.queue(() => this.verify(true)); }
+  assertOpen() {
+    const epoch = this.epoch;
+    return this.queue(async () => {
+      await this.verify(true);
+      if (epoch !== this.epoch) throw Error('Допуск трафика уже отозван');
+    });
+  }
   clear() {
     ++this.epoch;
     this.probeCapability = null;

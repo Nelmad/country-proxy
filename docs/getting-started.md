@@ -30,6 +30,11 @@ Requirements and limits:
 - Chrome 120+ is the code minimum. Acceptance used macOS 26.6.2 / Apple Silicon,
   Chrome for Testing 151.0.7922.34, and Python 3.14.7. Those results do not certify
   every older allowed version or a downloaded archive's Gatekeeper dialog.
+- Python 3.11.18 passed the previous candidate’s fresh ZIP install, native hello,
+  browser connection and update/rollback checks. Later changes require their own
+  checks: see the dated [current candidate evidence](verification.md#current-candidate).
+  Stock Chrome and Intel Macs are not certified by the Apple Silicon Chrome for
+  Testing result.
 - Linux has an installer but has not completed full browser acceptance.
   Windows and Incognito are unsupported.
 - No Chrome Web Store package, automatic updates, or Python-free bundle.
@@ -115,6 +120,39 @@ automatically and can remain blocked until you stop or an address is found.
 After connection, reload a page that was blocked if it does not retry itself.
 Country Proxy does not save blocked requests or automatically resubmit forms.
 
+## Routing and setting conflicts
+
+The following boundary changes are in the **prepared, unpublished 1.0.1 candidate**;
+they do not describe the unchanged v1.0.0 asset. Completed checks, limitations
+and remaining release steps are in [current candidate evidence](verification.md#current-candidate).
+
+While enabled, new HTTP/HTTPS requests and WS/WSS handshakes to these special
+destinations remain blocked **even after connected**: `localhost` and its
+subdomains (also with a trailing dot), IPv4 `127.0.0.0/8` and `169.254.0.0/16`,
+IPv6 `::1` and `fe80::/10`, and unspecified literals `0.0.0.0`, `::`, and
+`::ffff:0:0`. IPv4-mapped loopback and link-local forms are included too.
+Chrome canonicalizes alternate spellings before URL matching.
+This denies access to local tools through this profile; it does not send them
+through an untrusted proxy. Stop restores ordinary local access. This bounded
+URL rule does **not** inspect every hostname's DNS result or block the whole
+private-address space. It is not a firewall for the OS.
+
+Before admitting ordinary traffic, Country Proxy reads back effective
+`webRTCIPHandlingPolicy=disable_non_proxied_udp` and
+`networkPredictionEnabled=false`, then watches for changes. A safe value set
+by another extension or policy is accepted. If an effective value is unsafe
+or cannot be verified, the popup shows a protective-setting error and ordinary
+traffic stays blocked. Stop, resolve the conflicting extension/policy or use a
+separate profile, then reconnect explicitly; do not disable certificate checks.
+
+If a proxy owner or privacy value changes externally, revoking ordinary
+request admission starts when Chrome delivers the change notification, before
+helper teardown. These Chrome APIs are independent and asynchronous: a reaction
+window remains between the external change, notification and rule update.
+Country Proxy cannot promise atomic takeover protection or recall an already
+sent request or an established connection. Its closed gate remains until Stop;
+it does not overwrite another owner's proxy settings.
+
 ## Stop and recover
 
 These steps work even when web pages cannot load:
@@ -137,6 +175,17 @@ These steps work even when web pages cannot load:
 | **Проверяем в Chrome** / `ERR_BLOCKED_BY_CLIENT` | Ordinary requests are held pending browser confirmation. Wait for connected, or Stop. Reload the page after connection. |
 | One website fails while connected | The probe sites do not establish access to every destination. Try **Найти другой** or Stop. |
 | Another extension/policy controls the proxy | Use a separate profile or resolve that conflict. Country Proxy keeps its own request gate closed until Stop and does not overwrite the other owner's settings. |
+| Protective-setting error naming `webRTCIPHandlingPolicy` or `networkPredictionEnabled` (1.0.1 candidate) | Stop, resolve the extension/policy conflict or use a separate profile, then reconnect explicitly. A successful settings write alone does not establish the effective value. |
+| A local URL is blocked while connected (1.0.1 candidate) | Special local destinations are deliberately unavailable while enabled. Stop to use local tools. See the exact boundary above. |
+| **Подключение не подтверждено** (connection unconfirmed; 1.0.1 candidate) | Saved proof does not match the current route, selected set or traffic admission, or a state read failed. Stop, wait for off, then reconnect after the underlying error is resolved. |
+
+Failed addresses have a temporary cooldown. Independently, recovery requires a
+different server and exit IP from the previous active route. Expiring the
+cooldown does not remove this distinction: if only the previous route is
+available, recovery can keep searching. Stop and connect again to start a new
+session that may check that address afresh. It must still pass both HTTPS and
+country checks in the helper and confirmation in Chrome; acceptance is not
+guaranteed.
 
 For further help, use [Support](../.github/SUPPORT.md). Include a minimal
 reproduction and visible status, not a browser profile, personal IP, credentials,
@@ -192,11 +241,20 @@ share it. Leave other registrations and browser/system settings alone.
   same Chrome user-data-dir/helper registration can share that history;
   their country settings remain separate. The helper is launched by Chrome
   over Native Messaging, not a browser-traffic relay or HTTP control server.
-- **Network activity:** the helper fetches candidate lists from
-  [public sources](sources.md). Candidate and health checks contact Cloudflare
-  and Google through proxies; Cloudflare supplies the observed exit IP/country.
-  Chrome checks those HTTPS destinations too. Your actual browsing uses the
-  selected public proxy. Checks do not certify the proxy operator's behavior.
+- **Network activity and recipients:** the helper fetches candidate lists
+  directly from [public source operators](sources.md), outside Chrome's proxy
+  setting and request gate. Those operators (including source hosts/mirrors)
+  can see your direct network IP and the requested list/country parameters.
+  Candidate and health checks contact Cloudflare and Google through candidate
+  proxies; the proxy operators see your source IP and destination endpoints,
+  and the probe services see the candidate exit IP. Cloudflare supplies the
+  observed exit IP/country. Chrome checks those HTTPS destinations too. Actual
+  browsing uses the selected public proxy; destination sites receive its exit
+  IP, and an operator can read plain HTTP traffic. Checks do not certify any
+  operator's behavior. With SOCKS4, destination names use local DNS: the
+  configured DNS resolver can receive those queries. SOCKS5 uses remote DNS.
+  The helper's source downloads and these DNS lookups are not anonymized by
+  the browser route.
 - **Permissions:** `proxy` applies the profile route; `nativeMessaging`
   communicates with the helper; `storage` keeps local state; `alarms` supports
   reconnection. `declarativeNetRequest` holds new ordinary requests pending
@@ -205,7 +263,9 @@ share it. Leave other registrations and browser/system settings alone.
 - **`privacy`:** while applying its route, Country Proxy disables non-proxied
   WebRTC UDP and Chrome network prediction for the regular profile. Stop
   clears its own layer of these settings. These controls are not a promise
-  of anonymity or routing of all traffic.
+  of anonymity or routing of all traffic. The prepared 1.0.1 fixes additionally
+  verify effective values and close admission on unsafe/unverifiable changes;
+  see [conflicts and the asynchronous reaction window](#routing-and-setting-conflicts).
 
 The [architecture](architecture.md), [verification results](verification.md),
 and [stable scope](stable-readiness.md) provide the engineering details in
