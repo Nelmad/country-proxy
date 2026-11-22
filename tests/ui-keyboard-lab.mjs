@@ -41,7 +41,8 @@ async function namedNodes(p) {
   } finally { await cdp.detach(); }
 }
 try {
-  context = await chromium.launchPersistentContext(profile, {channel:'chromium', headless:true, locale:'ru-RU',
+  context = await chromium.launchPersistentContext(profile, {
+    ...(process.env.CHROME_TEST_EXECUTABLE ? {executablePath:process.env.CHROME_TEST_EXECUTABLE} : {channel:'chromium'}), headless:true, locale:'ru-RU',
     viewport:{width:390,height:600},ignoreDefaultArgs:['--disable-extensions'],
     args:['--disable-extensions-except='+extension,'--load-extension='+extension,'--disable-background-networking',
       '--disable-quic','--host-resolver-rules=MAP * ~NOTFOUND','--proxy-server=http://127.0.0.1:9']});
@@ -173,6 +174,9 @@ try {
     // Presentation fixture. Chrome applies the loopback route, no external socket is used.
     await popup.evaluate(async () => {
       const {proxyConfig}=await import(chrome.runtime.getURL('controller.js'));
+      const {gateRules}=await import(chrome.runtime.getURL('traffic-gate.js'));
+      const session=gateRules(chrome.runtime.id,'0'.repeat(32)).session;
+      await chrome.declarativeNetRequest.updateSessionRules({removeRuleIds:session.map(rule=>rule.id),addRules:session});
       const proxy={scheme:'http',host:'127.0.0.1',port:18999,country:'EE',exitIp:'203.0.113.4'};
       await chrome.proxy.settings.set({value:proxyConfig(proxy),scope:'regular'});
       await chrome.storage.local.set({enabled:true,selectedCountries:['EE'],pool:{countries:['EE'],count:0,checking:true},

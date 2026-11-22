@@ -17,12 +17,48 @@ from core import Candidate
 from history import EndpointHistory
 from history_store import FileHistoryStore, HISTORY
 
+RUNTIME_DISTRIBUTIONS = ('proxy-scraper-cli', 'certifi', 'rich', 'markdown-it-py', 'mdurl', 'Pygments')
+
+
+def prepare_owned_venv(app, source_python, *, python=None, distributions=RUNTIME_DISTRIBUTIONS):
+    """Create an actual owned venv and copy installed runtime packages offline.
+
+    The explicit source interpreter is read-only. The locked runtime graph is
+    pure Python and can be copied to TEST_PYTHON without downloading packages.
+    Bin scripts and pip are unnecessary; no source directories are linked.
+    """
+    target = app/'.venv'
+    subprocess.run([str(python or source_python), '-I', '-B', '-m', 'venv', '--without-pip', str(target)],
+                   check=True, capture_output=True, text=True, timeout=30)
+    code = '''import importlib.metadata as m,json,pathlib,sys
+rows=[]
+for name in sys.argv[1:]:
+ d=m.distribution(name)
+ for f in d.files or ():
+  if f.is_absolute() or '..' in f.parts or f.suffix=='.pyc':continue
+  source=pathlib.Path(d.locate_file(f))
+  if source.is_file():rows.append([str(source),str(f)])
+print(json.dumps(rows))
+'''
+    files = json.loads(subprocess.run([str(source_python), '-I', '-B', '-c', code, *distributions],
+                                     check=True, capture_output=True, text=True, timeout=15).stdout)
+    packages = Path(subprocess.run([str(target/'bin/python'), '-I', '-B', '-c',
+                                   'import sysconfig;print(sysconfig.get_path("purelib"))'],
+                                  check=True, capture_output=True, text=True, timeout=15).stdout.strip())
+    assert packages.is_relative_to(target)
+    for source, relative in files:
+        destination = packages/relative
+        assert destination.is_relative_to(packages)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+    return target
+
 
 class InstalledLauncherTests(unittest.TestCase):
     def setUp(self):
-        self.venv = ROOT/'.venv'
-        self.assertTrue((self.venv/'bin/python').exists(),
-                        'Requires the already installed test venv; this test never installs dependencies')
+        source_python = Path(os.environ.get('TEST_RUNTIME_PYTHON', str(ROOT/'.venv/bin/python')))
+        self.assertTrue(source_python.is_absolute() and source_python.is_file(),
+                        'Set TEST_RUNTIME_PYTHON to an already installed dependency interpreter; no downloads')
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name).resolve()
@@ -30,7 +66,11 @@ class InstalledLauncherTests(unittest.TestCase):
         self.profile = self.directory/"isolated-profile ' quoted"
         self.data = self.directory/'private-history'
         self.copy_bundle(ROOT)
-        (self.app/'.venv').symlink_to(self.venv, target_is_directory=True)
+        python = Path(os.environ.get('TEST_PYTHON', str(source_python)))
+        self.assertTrue(python.is_absolute() and python.is_file(), 'TEST_PYTHON must be an exact local interpreter')
+        self.venv = prepare_owned_venv(self.app, source_python, python=python)
+        self.assertFalse(self.venv.is_symlink())
+        self.venv_identity = (self.venv.stat().st_ino, (self.venv/'pyvenv.cfg').read_bytes())
         self.children = []
         self.addCleanup(self.stop_children)
 
@@ -51,6 +91,7 @@ class InstalledLauncherTests(unittest.TestCase):
             command += ['--data-dir', str(self.data)]
         result = subprocess.run(command, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.venv.stat().st_ino, (self.venv/'pyvenv.cfg').read_bytes()), self.venv_identity)
         self.registration = json.loads((self.profile/'NativeMessagingHosts/local.country_proxy.json').read_text())
         return result
 
@@ -137,20 +178,28 @@ class InstalledLauncherTests(unittest.TestCase):
         self.assertTrue(baseline, 'Set TEST_BASELINE_ROOT to the exact previous bundle')
         baseline = Path(baseline).resolve()
         self.assertTrue((baseline/'scripts/install.py').is_file())
+        baseline_version = json.loads((baseline/'extension/manifest.json').read_text())['version']
+        legacy = baseline_version == '0.2.0'
         self.installer()
         self.preload()
         first, hello = self.launch()
         self.assertEqual(hello['history']['records'], 1)
         self.stop(first)
         before = (self.data/HISTORY).read_bytes()
-        self.installer(prepare=True)
-        self.assertEqual(self.registration['path'], str(self.app/'.runtime/host'))
+        if legacy:
+            self.installer(prepare=True)
+            self.assertEqual(self.registration['path'], str(self.app/'.runtime/host'))
         self.copy_bundle(baseline)
-        self.installer(legacy=True)
+        self.installer(legacy=legacy)
         previous, hello = self.launch()
-        self.assertNotIn('history', hello)
+        self.assertEqual(hello['version'], baseline_version)
+        if legacy:
+            self.assertNotIn('history', hello)
+        else:
+            self.assertEqual(hello['history'], {'mode':'persistent', 'records':1})
         self.stop(previous)
-        self.assertEqual((self.data/HISTORY).read_bytes(), before)
+        if legacy:
+            self.assertEqual((self.data/HISTORY).read_bytes(), before)
         self.copy_bundle(ROOT)
         self.installer()
         restored, hello = self.launch()

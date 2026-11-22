@@ -14,6 +14,8 @@ import {inspectRuntime} from './chrome-runtime.mjs';
 
 const {chromium} = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(import.meta.dirname, '..');
+const executablePath = process.env.CHROME_TEST_EXECUTABLE;
+assert.ok(executablePath?.includes('Google Chrome for Testing'), 'Explicit Chrome for Testing executable required');
 const run = await fs.mkdtemp(path.join(os.tmpdir(), 'country-proxy-route-truth-'));
 const profile = path.join(run, 'profile');
 const reserveDiagnostics = process.argv.includes('--reserve-diagnostics');
@@ -25,7 +27,7 @@ const journal = path.join(run, 'commands.jsonl');
 const loopback = '127.0.0.1';
 const hosts = ['www.cloudflare.com', 'www.google.com'];
 const expectedExit = '192.0.2.11';
-const report = {scenarios: [], result: 'FAIL'};
+const report = {scenarios: [], result: 'FAIL', countries: ['AT', 'EE', 'NO'], countriesEqual: true};
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(read, label, timeout = 6500) {
   const deadline = Date.now() + timeout;
@@ -151,7 +153,7 @@ async function prepare() {
 
 async function launch(settings, restart = false) {
   const ext = path.join(root, 'extension');
-  browser = await chromium.launchPersistentContext(profile, {channel: 'chromium', headless: true,
+  browser = await chromium.launchPersistentContext(profile, {channel: 'chromium', executablePath, headless: true,
     ignoreDefaultArgs: ['--disable-extensions'], args: [
       '--enable-unsafe-extension-debugging', '--disable-quic',
       '--host-resolver-rules=' + hosts.map(h => 'MAP ' + h + ' ' + loopback + ':' + settings.originPort).concat('MAP * ~NOTFOUND', 'EXCLUDE 127.0.0.1').join(','),
@@ -192,7 +194,7 @@ async function clearRival() {
   await rivalPage.evaluate(() => chrome.proxy.settings.clear({scope: 'regular'}));
 }
 async function connected(proxyPort, connect = true) {
-  if (connect) assert.equal((await command({action: 'connect', country: 'NO'})).ok, true);
+  if (connect) assert.equal((await command({action: 'connect', countries: ['AT', 'EE', 'NO']})).ok, true);
   const s = await until(async () => {
     const s = await snapshot();
     if (s.data.status?.phase === 'error') throw Error(s.data.status.error);
@@ -210,7 +212,7 @@ async function connected(proxyPort, connect = true) {
 async function pendingOffer() {
   hold = true;
   const start = requests.length;
-  assert.equal((await command({action: 'connect', country: 'NO'})).ok, true);
+  assert.equal((await command({action: 'connect', countries: ['AT', 'EE', 'NO']})).ok, true);
   await until(async () => (await snapshot()).data.status?.phase === 'verifying' &&
     hosts.every(h => requests.slice(start).includes(h)) && pending.length === 2, 'both pending HTTPS responses');
   const details = await popup.locator('#proxy').innerText();
@@ -262,6 +264,37 @@ async function ownership(settings, slow) {
   assert.equal((await command({action: 'disconnect'})).ok, true);
 }
 
+async function privacyOwnership(settings, name, safe, unsafe) {
+  await rivalPage.evaluate(async ({name, safe}) => {
+    await chrome.privacy.network[name].set({value: safe, scope: 'regular'});
+  }, {name, safe});
+  await connected(settings.proxyPort);
+  const effective = await rivalPage.evaluate(name => chrome.privacy.network[name].get({}), name);
+  assert.equal(effective.value, safe);
+  // Read from Country Proxy: a safe effective value is allowed under another owner.
+  assert.equal(await popup.evaluate(async name => (await chrome.privacy.network[name].get({})).levelOfControl, name), 'controlled_by_other_extensions');
+  await rivalPage.evaluate(async ({name, unsafe}) => {
+    await chrome.privacy.network[name].set({value: unsafe, scope: 'regular'});
+  }, {name, unsafe});
+  await until(async () => (await snapshot()).data.status?.phase === 'error', 'effective privacy change closes route');
+  assert.equal(await popup.evaluate(async () => (await chrome.declarativeNetRequest.getSessionRules()).length), 0);
+  const ordinary = await browser.newPage();
+  try { await assert.rejects(ordinary.goto('https://' + hosts[0] + '/cdn-cgi/trace?privacy-check', {timeout: 5000}), /ERR_BLOCKED_BY_CLIENT/); }
+  finally { await ordinary.close(); }
+  await rivalPage.evaluate(name => chrome.privacy.network[name].clear({scope: 'regular'}), name);
+  await delay(120);
+  assert.equal((await snapshot()).data.status.phase, 'error', 'safe restoration requires explicit retry');
+  await command({action: 'disconnect'});
+  // set() resolving under a competing unsafe owner must never admit traffic.
+  await rivalPage.evaluate(({name, unsafe}) => chrome.privacy.network[name].set({value: unsafe, scope: 'regular'}), {name, unsafe});
+  await command({action: 'connect', countries: ['AT', 'EE', 'NO']});
+  await until(async () => (await snapshot()).data.status?.phase === 'error', 'unsafe privacy already effective');
+  assert.equal(await popup.evaluate(async () => (await chrome.declarativeNetRequest.getSessionRules()).length), 0);
+  await command({action: 'disconnect'});
+  await rivalPage.evaluate(name => chrome.privacy.network[name].clear({scope: 'regular'}), name);
+  report.scenarios.push({name: 'effective-privacy-' + name, safeForeignOwnerAccepted: true,
+    unsafeChangeBlocked: true, unsafePreexistingRejected: true, explicitRetryRequired: true});
+}
 async function rapidOwnership(settings) {
   const cmdStart = (await nativeCommands()).length;
   const eventStart = (await phases()).length;
@@ -536,6 +569,8 @@ try {
     await explainReserve();
   } else {
     if (!process.argv.includes('--stop-only')) {
+      await privacyOwnership(settings, 'webRTCIPHandlingPolicy', 'disable_non_proxied_udp', 'default');
+      await privacyOwnership(settings, 'networkPredictionEnabled', false, true);
       await ownership(settings, false);
       await ownership(settings, true);
       await rapidOwnership(settings);

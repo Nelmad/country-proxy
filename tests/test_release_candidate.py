@@ -59,9 +59,11 @@ class ReleaseCandidateTests(unittest.TestCase):
         self.assertNotIn('Next work.', notes)
         self.assertIn('/blob/v0.2.1/docs/installation.md', notes)
 
-    def test_legal_files_are_bound_to_snapshot_and_exact_candidate_archive(self):
+    def test_legal_and_dependency_locks_are_bound_to_snapshot_and_exact_candidate_archive(self):
         expected = {'LICENSE': b'MIT License\r\nCopyright (c) 2026 Fixture\r\n',
-                    'NOTICE': 'Notices\nТочный текст.\n'.encode()}
+                    'NOTICE': 'Notices\nТочный текст.\n'.encode(),
+                    'requirements.txt': b'fixture-runtime-lock\n',
+                    'build-requirements.txt': b'fixture-build-lock\n'}
         for name, body in expected.items():
             (self.root / name).write_bytes(body)
         record = self.make_snapshot()
@@ -100,7 +102,7 @@ class ReleaseCandidateTests(unittest.TestCase):
                 self.assertNotIn('черновик', notes.casefold())
 
     def test_legal_file_change_after_snapshot_is_rejected(self):
-        for name in ('LICENSE', 'NOTICE'):
+        for name in ('LICENSE', 'NOTICE', 'requirements.txt', 'build-requirements.txt'):
             with self.subTest(name=name):
                 self.output = self.base / ('output-' + name)
                 path = self.root / name

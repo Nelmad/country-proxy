@@ -16,9 +16,10 @@
   <section class="status" aria-labelledby="phase">
     <div class="status-heading">
       <span id="dot" class="dot" aria-hidden="true"></span>
-      <h2 id="phase" aria-live="polite">Загрузка…</h2>
+      <h2 id="phase">Загрузка…</h2>
     </div>
     <p id="detail"></p>
+    <p id="status-announcement" class="visually-hidden" role="status" aria-atomic="true"></p>
     <progress id="progress" aria-label="Проверено адресов" hidden></progress>
     <div id="proxy" class="proxy" hidden>
       <strong id="exit-location"></strong>

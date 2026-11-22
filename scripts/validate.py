@@ -3,9 +3,9 @@ import ast
 import base64
 import json
 from pathlib import Path
-import re
 import subprocess
 from package import release_version
+from doc_links import link_errors
 
 root=Path(__file__).resolve().parents[1]
 for folder in ['native','scripts','tests']:
@@ -21,7 +21,7 @@ for f in ['background.js','popup.html','options.html']: assert (root/'extension'
 assert set(manifest['permissions'])=={'proxy','storage','nativeMessaging','alarms','privacy','declarativeNetRequest'}
 assert manifest.get('incognito')=='not_allowed'
 cc=json.loads((root/'extension/countries.json').read_text());assert len(cc)==249 and len(set(cc))==249
-for p in [root/'README.md', root/'CONTRIBUTING.md', root/'CHANGELOG.md', *(root/'docs').rglob('*.md'), *(root/'.github').rglob('*.md')]:
-    for target in re.findall(r'\]\(([^)]+)\)',p.read_text()):
-        if not target.startswith(('https://','http://','#')): assert (p.parent/target.split('#',1)[0]).exists(),(p,target)
+errors = link_errors([root/'README.md', root/'CONTRIBUTING.md', root/'CHANGELOG.md',
+                     *(root/'docs').rglob('*.md'), *(root/'.github').rglob('*.md')])
+assert not errors, errors
 print('Python/JS syntax, manifest, ISO catalogue and local documentation links: PASS')

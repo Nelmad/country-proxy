@@ -3,6 +3,57 @@
 User-facing changes by version. [Русское руководство](docs/README.ru.md) ·
 [Verification and limits](docs/verification.md) · [Release process](docs/releases.md)
 
+Dated entries record preparation. Publishing a version is a separate step;
+see [GitHub Releases](https://github.com/Nelmad/country-proxy/releases) for
+published assets and the [release process](docs/releases.md) for preparation status.
+
+## [1.0.1] - 2026-11-22
+
+### Connection, status and recovery
+
+- Keep special local destinations blocked while connected: localhost names,
+  loopback, link-local and unspecified address literals, including Chrome-normalized
+  IPv4/IPv6 forms. This URL guard does not classify arbitrary DNS names by private IP.
+- Require safe effective WebRTC and network-prediction settings, watch changes,
+  and revoke ordinary traffic before waiting for helper shutdown. A proxy-owner
+  conflict observed during startup requires an explicit retry even if control
+  becomes available before restoration finishes.
+- Revoke traffic on an explicit outside-country health result and require fresh
+  Chrome proof before reopening, including for the same address. Preserve a
+  completed outside-country HTTPS result when the other probe fails first;
+  an unfinished probe does not delay failure reporting.
+- Withdraw the popup's connected/current-exit display when the effective route,
+  country proof or traffic admission no longer matches, including failed reads.
+  Keep Stop available without changing saved preferences or connection state.
+- Recover catalogue/preferences initialization on an explicit retry after startup
+  storage errors. Accept Stop during startup without restoring saved intent;
+  keep retry Stop available after cleanup and diagnostic-storage failures.
+  Newer commands still supersede failed attempts.
+- Revoke withdrawn offers without waiting for reserve statistics to save. When
+  successful health changes the active host or exit, reconcile and publish the
+  reserve immediately while preserving independent reserves. Apply failed-host
+  cooldown before endpoint quarantine removes its lease, preventing other ports
+  on that host from immediately refilling the pool.
+- Announce meaningful recovery/detail changes without repeating progress
+  counters; mark the selected country explicitly in the single-country picker.
+
+### Installation, validation and delivery
+
+- Verify runtime and build dependency downloads with hashes, build the upstream
+  helper in a disposable isolated environment, and check the installed graph.
+- Share the package inventory with clean ZIP extraction; include license files
+  and dependency locks in installation and upgrade acceptance. Require expected
+  ZIP identity before clean-install execution and fail acceptance on product errors.
+- Exercise the generated native launcher against ambient Python path injection
+  using a real owned test venv and a positive control without isolation. Validate
+  documentation section links as well as file paths.
+- Clarify privacy/DNS and recovery limits, dated evidence, and release steps.
+  Protect main/tags and future releases; add bounded dependency-update proposals.
+
+[Verification and limits](docs/verification.md#current-candidate) records the
+dated local acceptance. Controlled fixtures establish the tested recovery
+behavior, not the availability or uptime of public proxies.
+
 ## [1.0.0] - 2026-11-17
 
 First stable package for manual macOS installation. Published assets and status:

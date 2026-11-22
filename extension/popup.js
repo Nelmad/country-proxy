@@ -1,7 +1,9 @@
 import {BLOCKED, matchesEffectiveRoute, proxyConfig, restoreCountrySettings} from './controller.js';
 import {readReserveDiagnostics, reserveCounters, reserveFailures, reserveStageText, reserveRemovalText} from './reserve-diagnostics.js';
 import {loadCountryCatalog, countryLabel, filterCountries, validFavorites, navigateItems} from './country-catalog.js';
+import {statusDetail, createStatusAnnouncer, hasRejectedHealthCountry, hasTrafficAdmission} from './popup-status.js';
 const $ = id => document.getElementById(id);
+const announceStatus = createStatusAnnouncer($('status-announcement'));
 const reasons = {timeout: 'таймаут', tls: 'ошибка TLS', connect: 'нет соединения', transport: 'сбой передачи', http: 'HTTPS-сервис не ответил как ожидалось', country: 'другая страна', invalid_trace: 'неверный ответ о стране', internal: 'ошибка проверки', unavailable: 'недоступен'};
 const labels = {off: 'Отключено', stopping: 'Отключаем прокси', stopError: 'Отключение не завершено', searching: 'Ищем адреса', checking: 'Проверяем прокси', slow: 'Проверяем медленные адреса',
   verifying: 'Проверяем в Chrome', connected: 'Подключено', confirming: 'Перепроверяем соединение',
@@ -84,9 +86,15 @@ function renderCountryList() {
     } else {
       choose.dataset.country = country.code;
       choose.disabled = applying;
-      choose.setAttribute('aria-current', String(selectionMode === 'single' && selectedCountries.includes(country.code)));
+      const current = selectionMode === 'single' && selectedCountries.includes(country.code);
+      choose.setAttribute('aria-current', String(current));
       choose.setAttribute('aria-label', `Подключиться: ${countryLabel(country)}`);
       choose.append(text);
+      if (current) {
+        const marker = document.createElement('span');
+        marker.className = 'current-country-marker'; marker.textContent = '✓ Выбрана';
+        marker.setAttribute('aria-hidden', 'true'); choose.append(marker);
+      }
       choose.addEventListener('click', () => chooseCountry(country.code));
     }
     const favorite = document.createElement('button'); favorite.className = 'favorite-toggle';
@@ -123,7 +131,13 @@ function renderCountries() {
   $('favorites-section').hidden = !favorites.length;
   $('favorites').replaceChildren(...favorites.map(code => {
     const button = document.createElement('button');
+    const current = !multiple && selectedCountries.includes(code);
     button.textContent = labelFor(code); button.dataset.quickCountry = code;
+    if (current) {
+      const marker = document.createElement('span');
+      marker.className = 'current-country-marker'; marker.textContent = '✓ Выбрана';
+      marker.setAttribute('aria-hidden', 'true'); button.append(' ', marker);
+    }
     button.setAttribute('aria-current', String(selectedCountries.includes(code)));
     button.setAttribute('aria-label', multiple ? `Изменить группу: ${labelFor(code)}` : `Подключиться: ${labelFor(code)}`);
     button.addEventListener('click', () => {
@@ -323,11 +337,27 @@ function renderReserveDiagnostics(enabled, rawReport) {
 let renderRevision = 0;
 async function render() {
   const revision = ++renderRevision;
-  const [state, effectiveRoute] = await Promise.all([
-    chrome.storage.local.get(null),
-    chrome.proxy.settings.get({incognito:false}).catch(() => null)
+  const [state, effectiveRoute, admission] = await Promise.all([
+    chrome.storage.local.get(null).catch(() => null),
+    chrome.proxy.settings.get({incognito:false}).catch(() => null),
+    Promise.resolve().then(() => chrome.declarativeNetRequest.getSessionRules()).catch(() => null)
   ]);
   if (revision !== renderRevision) return;
+  if (!state) {
+    // A failed refresh must not leave a previous green render on screen. Keep
+    // the country UI intact, but withdraw all current-route claims until readback.
+    const phaseLabel = 'Подключение не подтверждено';
+    const error = 'Не удалось прочитать состояние подключения. Нажмите «Отключить» и повторите после восстановления настроек.';
+    if ($('phase').textContent !== phaseLabel) $('phase').textContent = phaseLabel;
+    $('dot').className = 'dot problem';
+    $('detail').textContent = error;
+    for (const id of ['proxy', 'progress', 'reserve', 'connect', 'rotate']) $(id).hidden = true;
+    for (const id of ['exit-location', 'exit-address', 'server-address', 'checked', 'reserve']) $(id).textContent = '';
+    $('disconnect').hidden = false;
+    $('disconnect').textContent = 'Отключить';
+    announceStatus({phase: 'error', error}, {phaseLabel});
+    return;
+  }
   const s = state.status || {phase: 'off'};
   const enabled = !!state.enabled;
   const previousSelection = JSON.stringify([selectionMode, selectedCountries]);
@@ -348,36 +378,39 @@ async function render() {
   const countryState = JSON.stringify([favorites, newSelection]);
   if (lastCountryState !== countryState) { lastCountryState = countryState; renderCountries(); }
   const multiple = selectionMode === 'multiple';
-  const phaseLabel = labels[s.phase] || s.phase;
+  const proofPhase = ['connected', 'confirming'].includes(s.phase);
+  const rejectedHealthCountry = hasRejectedHealthCountry(s);
+  let routeMatches = false;
+  try { routeMatches = !!s.proxy && matchesEffectiveRoute(effectiveRoute, proxyConfig(s.proxy)); }
+  catch { /* Invalid saved endpoints cannot substantiate a current connection. */ }
+  const confirmed = enabled && proofPhase && s.browser?.ok === true && !rejectedHealthCountry &&
+    !selectionInvalid && selectedCountries.includes(s.browser.country) && selectedCountries.includes(s.proxy?.country) &&
+    (s.countries == null || Array.isArray(s.countries) && sameCountries(s.countries, selectedCountries)) && routeMatches &&
+    hasTrafficAdmission(admission, chrome.runtime.id);
+  const unconfirmed = proofPhase && !confirmed && !rejectedHealthCountry;
+  const phaseLabel = s.phase === 'connected' && !confirmed ? 'Подключение не подтверждено' : labels[s.phase] || s.phase;
+  const recovery = unconfirmed ? 'Нажмите «Отключить», дождитесь «Отключено» и подключитесь снова.' : '';
+  const displayStatus = unconfirmed ? {...s, error: '', note:
+    (!effectiveRoute ? 'Не удалось проверить текущий маршрут Chrome.' :
+      matchesEffectiveRoute(effectiveRoute, BLOCKED) ? 'Chrome использует блокирующий маршрут.' :
+      !routeMatches ? 'Текущий маршрут Chrome не совпадает с сохранённым подключением.' :
+      'Текущий выход Chrome не подтверждён для выбранных стран и допуска трафика.') + ' ' + recovery} : s;
   if ($('phase').textContent !== phaseLabel) $('phase').textContent = phaseLabel;
-  $('dot').className = 'dot ' + (s.phase === 'connected' && s.browser?.ok ? 'online' : ['error', 'stopError', 'helper'].includes(s.phase) ? 'problem' : enabled ? 'busy' : '');
-  $('detail').textContent = s.error || s.note || ({
-    off: selectedCountries.length ? 'Можно снова подключиться с выбранными странами.' : 'Выберите одну или несколько стран. Адрес найдём автоматически.',
-    searching: multiple ? 'Ищем адреса во всей выбранной группе без приоритета стран.' : 'Получаем свежие списки из открытых источников.',
-    checking: `Проверено ${s.done || 0} из ${s.total || 0}. Проверяем HTTPS и страну выхода.`,
-    slow: `Повторная проверка с увеличенным таймаутом: ${s.done || 0} из ${s.total || 0}.`,
-    stopping: 'Освобождаем настройки Chrome.',
-    verifying: 'Помощник нашёл адрес. Chrome проверяет HTTPS и страну выхода. Запросы вкладок откроются после подтверждения.',
-    connected: 'При сбое расширение само подберёт замену.',
-    confirming: 'Один запрос не прошёл. Проверяем повторно перед заменой.',
-    reserve: 'Повторно проверяем подготовленный адрес перед подключением в Chrome.',
-    replacing: multiple ? 'Пробуем резерв из всей группы, затем общий поиск без приоритета стран.' : 'Пробуем резерв, затем ищем следующий адрес выбранной страны.',
-    empty: multiple ? 'Повторим поиск через минуту во всей группе. За её пределы не выходим.' : 'Повторим поиск через минуту в этой же стране. Можно выбрать другую.',
-    helper: 'Запустите Install.command из папки Country Proxy. Повторное подключение — автоматически.'
-  }[s.phase] || '');
+  $('dot').className = 'dot ' + (s.phase === 'connected' && confirmed ? 'online' : unconfirmed || ['error', 'stopError', 'helper'].includes(s.phase) ? 'problem' : enabled ? 'busy' : '');
+  $('detail').textContent = statusDetail(displayStatus, {multiple, hasSelection: !!selectedCountries.length});
   $('progress').hidden = !['checking','slow'].includes(s.phase) || !s.total;
   $('progress').max = s.total || 1; $('progress').value = s.done || 0;
-  $('proxy').hidden = !s.proxy;
-  const confirmed = ['connected', 'confirming'].includes(s.phase) && s.browser?.ok === true;
-  const observation = confirmed ? s.browser : s.proxy;
+  const showProxy = !!s.proxy && !unconfirmed;
+  $('proxy').hidden = !showProxy;
+  const observation = rejectedHealthCountry ? s.health : confirmed ? s.browser : s.proxy;
   const exitCountry = observation?.country;
   const exitLabel = byCode.has(exitCountry) ? labelFor(exitCountry) : exitCountry;
   const exitTitle = confirmed ? (s.phase === 'confirming' ? 'Последний выход Chrome' : 'Выход сейчас') : 'Выход по проверке помощника';
   const latency = Number.isFinite(observation?.latencyMs) ? ` · ${(observation.latencyMs/1000).toFixed(1)} с` : '';
-  $('exit-location').textContent = s.proxy ? exitLabel || 'Страна неизвестна' : '';
-  $('exit-address').textContent = s.proxy ? `${exitTitle}: ${observation?.exitIp || '—'}` : '';
-  $('server-address').textContent = s.proxy ? `${s.proxy.scheme.toUpperCase()} · ${s.proxy.host}:${s.proxy.port}${latency}` : '';
-  $('checked').textContent = observation?.checkedAt ? (confirmed ? 'Проверено в Chrome: ' : 'Проверено помощником: ') +
+  $('exit-location').textContent = showProxy ? exitLabel || 'Страна неизвестна' : '';
+  $('exit-address').textContent = showProxy ? (rejectedHealthCountry ? 'Трафик заблокирован — ожидается проверка' : `${exitTitle}: ${observation?.exitIp || '—'}`) : '';
+  $('server-address').textContent = showProxy ? `${s.proxy.scheme.toUpperCase()} · ${s.proxy.host}:${s.proxy.port}${latency}` : '';
+  $('checked').textContent = unconfirmed ? '' : observation?.checkedAt ? (confirmed ? 'Проверено в Chrome: ' : 'Проверено помощником: ') +
     new Date(observation.checkedAt).toLocaleTimeString('ru') : (s.warnings || []).join(' · ');
   const diagnostics = s.diagnostics;
   const failures = Object.entries(diagnostics?.failures || {}).filter(([,count]) => count > 0)
@@ -392,7 +425,7 @@ async function render() {
   const pool = sameCountries(poolCountries, selectedCountries) ? state.pool : null;
   const count = pool?.expiresAt > Date.now() ? pool.count : 0;
   let routeNote = '';
-  if (enabled && s.phase === 'connected' && confirmed && s.proxy && matchesEffectiveRoute(effectiveRoute, proxyConfig(s.proxy))) {
+  if (s.phase === 'connected' && confirmed) {
     routeNote = count ? `Резерв${multiple ? ' группы' : ''}: ${count} из 2 · проверен помощником` :
       pool?.checking ? 'Подключение работает. Ищем запасной адрес.' : 'Подключение работает. Запасного адреса пока нет.';
   } else if (enabled && ['searching','checking','slow','reserve','replacing','empty','helper'].includes(s.phase) &&
@@ -401,12 +434,17 @@ async function render() {
   }
   $('reserve').textContent = routeNote;
   $('reserve').hidden = !routeNote;
+  // Reserve counts, timestamps and diagnostics stay readable without repeating
+  // every timer tick in the live region. The blocked-route recovery is actionable.
+  const waitingRecovery = routeNote.startsWith('Вкладки ждут') ? routeNote : '';
+  announceStatus(displayStatus, {phaseLabel, multiple, hasSelection: !!selectedCountries.length, recovery: waitingRecovery});
   const retry = enabled && s.phase === 'error' && s.lastFailure?.stage === 'local';
   $('connect').hidden = (enabled && !retry) || s.phase === 'stopping';
   $('connect').textContent = selectionInvalid ? 'Выбрать страны заново' : retry ? 'Повторить подключение' : multiple ? `Подключить группу (${selectedCountries.length})` : selectedCountries.length ? 'Подключить' : 'Выбрать страну';
-  $('disconnect').hidden = !enabled && s.phase !== 'stopError';
-  $('disconnect').textContent = s.phase === 'stopError' ? 'Повторить отключение' : 'Отключить';
-  $('rotate').hidden = !enabled || !s.proxy;
+  const stopping = ['stopping', 'stopError'].includes(s.phase);
+  $('disconnect').hidden = !enabled && !stopping && !unconfirmed;
+  $('disconnect').textContent = stopping ? 'Повторить отключение' : 'Отключить';
+  $('rotate').hidden = !enabled || !s.proxy || unconfirmed;
 }
 
 $('mode-single').addEventListener('click', event => openPicker('single', event.currentTarget));

@@ -102,3 +102,87 @@ test('failed admission suspends the session and blocks its qualified candidate',
   assert.equal(observed.states.at(-1).phase, 'error');
   assert.equal(controller.active, null); assert.equal(controller.suspended, true);
 });
+
+
+test('takeover revokes immediately before controller queue and slow native Stop', async () => {
+  const {observed, api, controller, offer} = setup(async () => ({ok: true, country: 'EE'}));
+  await controller.start(countries); await controller.status(offer());
+  const entered = Promise.withResolvers(), releaseQueue = Promise.withResolvers();
+  const queued = controller.queue(async () => { entered.resolve(); await releaseQueue.promise; });
+  await entered.promise;
+  let revoked = false, stopped = false;
+  const nativeFinish = Promise.withResolvers();
+  api.revokeTraffic = () => { revoked = true; observed.held = true; return Promise.resolve(); };
+  api.stopNative = async () => { stopped = true; await nativeFinish.promise; };
+  const failed = controller.routeChanged(controller.id, Error('privacy takeover'));
+  assert.equal(revoked, true); assert.equal(observed.held, true); assert.equal(stopped, false);
+  releaseQueue.resolve(); await queued; await tick();
+  assert.equal(stopped, true); assert.equal(observed.held, true);
+  nativeFinish.resolve(); await failed;
+  assert.equal(observed.states.at(-1).phase, 'error');
+});
+
+
+test('failed immediate revoke attempts independent blocking before slow native cleanup', async () => {
+  const {observed, api, controller, offer} = setup(async () => ({ok: true, country: 'EE'}));
+  await controller.start(countries); await controller.status(offer());
+  const nativeEntered = Promise.withResolvers(), nativeFinish = Promise.withResolvers();
+  api.revokeTraffic = () => Promise.reject(Error('emergency DNR error'));
+  api.stopNative = async () => { nativeEntered.resolve(); await nativeFinish.promise; };
+  const failing = controller.routeChanged(controller.id, Error('privacy takeover'));
+  await nativeEntered.promise;
+  assert.deepEqual(observed.route, BLOCKED, 'independent fallback must precede a slow native Stop');
+  const stopping = controller.stop(); nativeFinish.resolve();
+  await Promise.all([failing, stopping]);
+  assert.equal(observed.states.at(-1).phase, 'off');
+  assert.equal(controller.enabled, false);
+});
+
+
+for (const transition of ['start','stop','lost','incompatible']) {
+ test('generation transition revokes before a blocked controller queue: '+transition, async () => {
+  const {observed, api, controller, offer} = setup(async () => ({ok:true,country:'EE'}));
+  await controller.start(countries); await controller.status(offer());
+  const queuedEntered=Promise.withResolvers(), queuedFinish=Promise.withResolvers();
+  const queued=controller.queue(async()=>{queuedEntered.resolve();await queuedFinish.promise;});await queuedEntered.promise;
+  let revoked=false, protectedRoute=false;
+  api.revokeTraffic=()=>{revoked=true;observed.held=true;return Promise.resolve();};
+  api.protectRoute=()=>{protectedRoute=true;observed.route=BLOCKED;return Promise.resolve(true);};
+  const changing=transition==='start'?controller.start('NO'):controller[transition]();
+  assert.equal(revoked,true);assert.equal(protectedRoute,true);assert.equal(observed.held,true);
+  queuedFinish.resolve();await queued;await changing;
+ });
+}
+
+for (const when of ['queued','native']) {
+ test('unsafe takeover keeps fail-closed precedence over helper events: '+when, async()=>{
+  const {observed,api,controller,offer}=setup(async()=>({ok:true,country:'EE'}));
+  await controller.start(countries);await controller.status(offer());
+  const entered=Promise.withResolvers(),finish=Promise.withResolvers();
+  if(when==='queued')controller.queue(async()=>{entered.resolve();await finish.promise;});
+  else api.stopNative=async()=>{entered.resolve();await finish.promise;};
+  if(when==='queued')await entered.promise;
+  api.revokeTraffic=async()=>{observed.held=true;};api.protectRoute=async()=>true;
+  const failed=controller.routeChanged(controller.id,Error('unsafe privacy'));
+  assert.equal(controller.suspended,true,'notification must suspend synchronously');
+  if(when==='native')await entered.promise;
+  const securityId=controller.id;await controller.lost();await controller.incompatible();
+  assert.equal(controller.id,securityId,'passive events may not supersede security failure');
+  finish.resolve();await failed;
+  assert.equal(observed.states.at(-1).phase,'error');assert.equal(controller.suspended,true);
+ });
+}
+
+test('protective fallback starts despite pending DNR and controller job; status is non-green',async()=>{
+ const {observed,api,controller,offer}=setup(async()=>({ok:true,country:'EE'}));
+ await controller.start(countries);await controller.status(offer());
+ const entered=Promise.withResolvers(),queueFinish=Promise.withResolvers(),revokeFinish=Promise.withResolvers();
+ const queued=controller.queue(async()=>{entered.resolve();await queueFinish.promise;});await entered.promise;
+ let protectedRoute=false;
+ api.revokeTraffic=()=>revokeFinish.promise;
+ api.protectRoute=()=>{protectedRoute=true;observed.route=BLOCKED;return Promise.resolve(true);};
+ const failed=controller.routeChanged(controller.id,Error('unsafe route'));
+ assert.equal(protectedRoute,true,'proxy fallback must not wait for DNR/queue');
+ await tick();assert.equal(observed.states.at(-1).phase,'error','unsafe notification must drop green before cleanup waits');
+ queueFinish.resolve();revokeFinish.resolve();await queued;await failed;
+});

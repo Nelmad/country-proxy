@@ -130,7 +130,7 @@ jobs:
       - name: Show reviewed check contract
         run: python3 -B scripts/check.py --list
       - name: Run offline contract
-        run: python3 -B scripts/check.py --execute-reviewed 57cd7c8e1464c134e0a27e109c4d782619f88bc5e3c73ded8e3b4cc8547b0bd9
+        run: python3 -B scripts/check.py --execute-reviewed 7a85786603be3755d9e1504f6103fb3d85fcb695db4c1048f5baa3553e39eb68
       - name: Verify unchanged source and package candidate
         id: package
         run: >-

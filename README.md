@@ -40,6 +40,17 @@ across that profile are blocked**, including open tabs and localhost. Previously
 sent traffic and existing connections cannot be recalled. Keep the recovery
 steps below available before starting.
 
+The **prepared, unpublished 1.0.1 candidate** also keeps special local
+destinations blocked while connected: localhost names, loopback, link-local
+and unspecified address literals. Stop releases that restriction. This is a
+bounded URL policy, not protection against every DNS name resolving to a private
+address. Effective WebRTC/prediction settings are checked; an unsafe conflict
+stops admission and requires resolving the conflict before reconnecting.
+Chrome reports external changes asynchronously, so a proxy/privacy takeover
+has a reaction window; protection is not atomic. See the
+[exact limits and recovery](docs/getting-started.md#routing-and-setting-conflicts)
+and [current candidate checks and limits](docs/verification.md#current-candidate).
+
 ## Quick start
 
 1. Install Python 3.11+ if needed. Download `country-proxy-X.Y.Z.zip` and its
@@ -83,9 +94,11 @@ also covers a missing helper and a connection that remains in search.
   targets and Cloudflare GeoIP; Chrome then checks its own route. Supported
   transports: HTTP CONNECT, HTTPS proxy, SOCKS4, and SOCKS5.
 - **Recovery and diagnostics.** Up to two reserves are prepared for the whole
-  set. Failed candidates are temporarily skipped; source contribution and
-  reserve diagnostics explain the current search. Search retries when no
-  acceptable address is available.
+  set. Failed candidates are temporarily skipped; replacement also requires a
+  different server and exit from the previous active route. Source contribution
+  and reserve diagnostics explain the current search. Search retries when no
+  acceptable address is available; [recovery limits](docs/getting-started.md#stop-and-recover)
+  explain why an expired cooldown alone does not restore the previous route.
 - **Reusable selection.** Favorites and named country groups are stored
   locally. Group JSON export/import contains group names and countries.
 

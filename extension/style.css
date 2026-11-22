@@ -39,7 +39,7 @@ input[type="checkbox"], progress { accent-color: var(--accent); }
 
 .popup { width: 390px; min-width: 0; max-height: 600px; overflow-y: auto; }
 /* Chrome initially measures an action popup in a tiny viewport for its intrinsic width. */
-@media (min-width: 240px) and (max-width: 389px) { .popup { width: 100%; } }
+@media (min-width: 150px) and (max-width: 389px) { .popup { width: 100%; } }
 .popup main { padding: 0 20px 12px; }
 
 .masthead {
@@ -119,6 +119,7 @@ input[type="checkbox"], progress { accent-color: var(--accent); }
 .favorite-chips { max-height: 76px; }
 .favorite-chips button, .selection-chips button { background: transparent; border-color: var(--line); font-size: 0.8571rem; padding: 4px 7px; }
 .favorite-chips button[aria-current="true"], .country-option[aria-current="true"], .country-checkbox:has(:checked), .selection-chips button { background: var(--pale); border-color: #d3b8a8; }
+.current-country-marker { display: inline-block; margin-left: 6px; color: var(--accent); font-size: 0.7857rem; font-weight: 700; }
 .connection-controls { margin: 13px 0 12px; }
 .actions { flex-wrap: wrap; }
 .actions button { flex: 1 1 auto; max-width: 100%; overflow-wrap: anywhere; min-height: 36px; font-size: 0.9286rem; }
