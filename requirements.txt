@@ -1,7 +1,7 @@
 # Runtime inputs: PyPI pure-Python wheels only; upstream source is the explicit exception.
 # SHA-256 verified against official PyPI metadata and downloaded bytes on 2026-11-20.
 proxy-scraper-cli @ https://github.com/maximilianfeix/proxy-scraper/archive/b1ade5b4aa0627ccbb193dcd9d36a621c0a22aeb.zip#sha256=ce21f3aeba1fb9ce73f866aa89d994526bf30f5adf3ee335692f3dc2bf80f48b --hash=sha256:ce21f3aeba1fb9ce73f866aa89d994526bf30f5adf3ee335692f3dc2bf80f48b
-certifi==2026.10.23 --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
+certifi==2026.11.20 --hash=sha256:7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f --hash=sha256:af1cb240a8133f105aa52684a3a3258339d7f2fd0bd4e2812698ff5cf5588c4e
 rich==15.0.0 --hash=sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb
 markdown-it-py==4.2.0 --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
 mdurl==0.1.2 --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8
